@@ -31,11 +31,12 @@ export interface Config {
   firstLoad?: boolean
   merge?: boolean
   mergeItem?: boolean
+  urlDeduplication?: boolean
   // imageSafety?: boolean
   videoRepost?: boolean
   // proxyAgent?: string
   toImg?: boolean
-  useCss?: boolean
+  // useCss?: boolean
   rssItem?: object
   maxRssItem?:number
   debug?: boolean
@@ -53,10 +54,10 @@ export interface rssArg {
   merge?: boolean|never
   mergeItem?: boolean|never
   content: string|never
-  videoRepost?: boolean|never
   userAgent?: string|never
+  videoRepost?: boolean|never
   toImg?: boolean|never
-  useCss?: boolean|never
+  // useCss?: boolean|never
   forceRead?:number
   rssItem?: Array<string>|never
 }
@@ -66,13 +67,14 @@ export const Config: Schema<Config> = Schema.object({
   refresh: Schema.number().description('刷新订阅源的时间间隔（秒）,订阅配置内仅影响当前订阅').default(600),
   firstLoad:Schema.boolean().description('默认首次订阅时发送最后的更新，可以被订阅配置覆盖').default(true),
   merge:Schema.boolean().description('默认以合并消息发送，可以被订阅配置覆盖').default(true),
-  mergeItem:Schema.boolean().description('有多条更新时合并发送，不同订阅链接不会合并，可以被订阅配置覆盖').default(true),
+  mergeItem:Schema.boolean().description('有多条更新时合并发送，不同订阅链接间不会合并，可以被订阅配置覆盖').default(true),
+  urlDeduplication:Schema.boolean().description('不允许添加多条相同订阅').default(true),
   // imageSafety: Schema.boolean().description('风险图片过滤').default(true).experimental(),
   // userAgent: Schema.string().role('link').description('默认请求的userAgent').experimental(),
   // proxyAgent: Schema.string().role('link').description('默认请求的代理地址').experimental(),
   toImg: Schema.boolean().description("使用 puppeteer 插件将description转换成图片发送。请确保 puppeteer 服务已加载。在 puppeteer 插件设置页面中调节转换成图片的详细设置（如图片宽度），可以被订阅配置覆盖 ").default(false),
   videoRepost: Schema.boolean().description('允许视频转发').default(false),
-  useCss: Schema.boolean().description('使用rss内的css进行puppeteer渲染 开发中').default(false).experimental(),
+  // useCss: Schema.boolean().description('使用rss内的css进行puppeteer渲染 开发中').default(false).experimental(),
   maxRssItem: Schema.number().description('限制单个RSS链接更新时发送条数上限防止刷屏(0表示不限制)，可以被订阅配置覆盖').default(10),
   rssItem: Schema.dict(Boolean).description('会按照这里给出的 item 中的key，按顺序提取出 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 拼装成一起（每项之间会加换行符）并推送至订阅该源的频道。 关闭key右边的开关会使 rss-owl 忽略这个key，可以被订阅配置覆盖').default({"title":true,"author":false,"pubDate":false,"link":false,"guid":false,"description":true}).description('推送单条更新时的排版'),
   debug:Schema.boolean().description('调试开关').default(false),
@@ -178,23 +180,28 @@ const parseRssItem = async(item:object,arg:rssArg,authorId:string|number,css:str
     if(key == 'description'){
       let videoMessage = ''
       const html = cheerio.load(messageItem[key])
-      if(config.videoRepost&&(arg.videoRepost||(!arg?.videoRepost&&!arg?.content))){
+      
+      if(arg.videoRepost&&arg?.content!=='image'&&arg?.content!=='text'){
         videoMessage = [...html('video').map((v,i)=>i.attribs.src)].map(i=>`<message><author id="${authorId}"/><video src="${i}"/></message>`).join("")
       }
-      if(arg.content&&arg.content!=='default'){
-        if(arg.content=='text'){
-          return `<message><author id="${authorId}"/>${html.text()}</message>`
-        }else if(arg.content=='image'){
-          let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await(await fetch(i)).arrayBuffer()))
-          let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
-          return imgMessage
-        }else{
-          return '无效的content参数'
-        }
-      }else if(ctx.puppeteer&&config.toImg){
-        return `<message><author id="${authorId}"/>${await ctx.puppeteer.render(`<html>${messageItem[key]}<style type="text/css">${arg.useCss?css:""}</style></html>`)}</message>${videoMessage}`
-      }else{
+      if(!arg.content&&ctx.puppeteer&&config.toImg){
+          //puppeteer
+          return `<message><author id="${authorId}"/>${await ctx.puppeteer.render(`<html>${messageItem[key]}</html>`)}</message>${videoMessage}`
+      }else if(!arg.content||arg.content=='mixin'){
+        let text = `<message><author id="${authorId}"/>${html.text()}</message>`
+        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await(await fetch(i)).arrayBuffer()))
+        let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
+        return text+imgMessage
+      }else if(arg.content=='text'){
+            return `<message><author id="${authorId}"/>${html.text()}</message>`
+      }else if(arg.content=='image'){
+        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await(await fetch(i)).arrayBuffer()))
+        let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
+        return imgMessage
+      }else if(arg.content=='none'){
         return `<message><author id="${authorId}"/>${messageItem[key]}${videoMessage}</message>`
+      }else{
+        return `无效的content参数:${arg.content}`
       }
     }
     return `<message><author id="${authorId}"/>${messageItem[key]}</message>`
@@ -225,7 +232,7 @@ const mergeArg = (arg)=>({
   ...config,
   ...arg,
   rssItem:arg.rssItem||Object.keys(config.rssItem).filter(i=>config.rssItem[i]),
-  videoRepost:config.videoRepost&&(arg.videoRepost||true),
+  videoRepost:config.videoRepost&&arg.videoRepost,
   toImg:config.toImg&&(arg.toImg||true)
 })
   ctx.on('ready', async () => {
@@ -243,19 +250,19 @@ const mergeArg = (arg)=>({
     .command('rssowl <url:text>', '订阅 RSS 链接')
     .alias('rsso')
     .option('list', '-l 查看订阅列表')
-    .option('remove', '-r <content:string> [订阅id|关键字]取消订阅的id或链接或关键字')
+    .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
     .option('removeAll', '全部删除，仅管理员可用')
-    .option('arg', '-a <content:string> 订阅参数,覆盖插件配置,额外参数forceLength(强制更新最新的item),例:-a refresh:1440,forceLength:10')
-    .option('rssItem', '-i <content:string> 订阅参数,覆盖插件配置,同插件配置rssItem,例:-i title,link,description')
-    .option('content', '-c <content:string> [default|text|image]内容过滤,')
-    .option('title', '-t <content:string> 自定义命名')
-    .option('force', '-f 强行写入，不通过链接可用性验证')
+    .option('arg', '-a <content>订阅参数,覆盖插件配置,额外参数forceLength(强制更新最新的item),例:-a refresh:1440,forceLength:10')
+    .option('rssItem', '-i <content>订阅参数,覆盖插件配置,同插件配置rssItem,例:-i title,link,description')
+    .option('content', '-c <content>[text|image|none] 内容提取,设为none时将对description内容直接输出')
+    .option('title', '-t <content>自定义命名')
+    .option('force', '强行写入，不通过链接可用性验证')
     // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
     // .option('updata', '立刻进行一次更新，但不会影响自定义refresh的下次更新时间')
     // .option('time', '指定该订阅每天更新时间，效果同refresh:1440,例:--time 08:00')
     .option('test', '-T 测试用，直接返回最新更新，但不会订阅')
     .action(async ({ session, options }, url) => {
-      debug("1.")
+      debug("init")
       debug(options)
       debug(session)
       const { id:guildId } = session.event.guild as any
@@ -269,10 +276,9 @@ const mergeArg = (arg)=>({
       let optionArg = formatArg(options.arg,options.rssItem,options.content)
       let arg = mergeArg(optionArg)
       // return '1'
-      debug("2.")
       if (options.test) {
-        debug("test")
-        debug({guildId,platform})
+        debug(`test:${url}`)
+        debug({guildId,platform,author,arg,optionArg})
         if(!url)return '请输入URL'
         rssJson = await getRssData(url)
         itemArray = rssJson.rss.channel.item
@@ -282,6 +288,7 @@ const mergeArg = (arg)=>({
         return
       }
       if (options.remove) {
+        debug(`remove:${options.remove}`)
         let removeIndex = ((rssList.findIndex(i=>i.rssId==options.remove)+1)||
         (rssList.findIndex(i=>i.url==options.remove)+1)||
         (rssList.findIndex(i=>i.url.indexOf(options.remove)+1)+1)||
@@ -297,23 +304,26 @@ const mergeArg = (arg)=>({
         return '取消订阅成功！'
       }
       if(options?.removeAll!=undefined){
+        debug(`removeAll:${rssList.length}`)
+        debug(rssList)
         let rssLength = rssList.length
         debug(await ctx.database.remove(('rssOwl' as any ), {platform,guildId})) 
         return `已删除${rssLength}条`
       }
       if (options.list) {
+        debug(`list`)
         if (!rssList.length) return '未订阅任何链接。'
         return rssList.map(i=>`${i.rssId}:${i.title||i.url}`).join('\n')
       }
-      if(rssList.findIndex(i=>i.url==url)+1){
+      if(config.urlDeduplication&& (rssList.findIndex(i=>i.url==url)+1)){
         return '已订阅此链接。'
       }
       debug(url)
       if (!url) {
-        return '输入url'
+        return '未输入url'
       }
       
-      debug("3.")
+      debug("subscribe active")
       const subscribe = {
         url,
         platform,
@@ -331,6 +341,9 @@ const mergeArg = (arg)=>({
       }
       try {
         rssJson = await getRssData(url)
+        if(!rssJson.rss.channel.item[0].pubDate||optionArg.forceLength){
+          return "RSS中未找到可用的pubDate，这将导致无法取得更新时间，请使用forceLength属性强制在每次更新时取得最新的订阅内容"
+        }
         subscribe.title = subscribe.title||rssJson.rss.channel.title
         subscribe.lastPubDate = rssJson?.rss?.channel?.item?.[0]?.pubDate || subscribe.lastPubDate
         ctx.database.create(('rssOwl' as any ),subscribe)
@@ -343,7 +356,7 @@ const mergeArg = (arg)=>({
             let message = item.arg.merge?`<message><author id="${item.author}"/>${messageList.join("")}</message>`:messageList.join("")
             return message
           }else{
-            return `<message>添加订阅成功</message>${(itemArray[0].pubDate||optionArg.forceLength)?"":"<message>RSS中未找到可用的pubDate，这会导致无法取得更新时间，建议使用forceLength属性强制在每次更新时取得订阅内容</message>"}${await parseRssItem(itemArray[0],arg,author)}`
+            return `<message>添加订阅成功</message>${await parseRssItem(itemArray[0],arg,author)}`
           }
         }
         return '添加订阅成功'
