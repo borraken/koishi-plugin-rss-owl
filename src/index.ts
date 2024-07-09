@@ -86,7 +86,7 @@ export function apply(ctx: Context, config: Config) {
       type:"integer",
       length:65535
     },
-    url:"string",
+    url:"text",
     platform:"string",
     guildId:"string",
     author:"string",
@@ -105,46 +105,42 @@ export function apply(ctx: Context, config: Config) {
     debug(rssList);
     for (const rssItem of rssList) {
       console.log(`${rssItem.platform}:${rssItem.guildId}`);
-      if(rssItem.arg.refresh&&(rssItem.arg.nextUpdataTime>+new Date()))continue
+      if(rssItem.arg.refresh){
+        if(rssItem.arg.nextUpdataTime>+new Date())continue
+        let nextUpdataTime = rssItem.arg.nextUpdataTime+rssItem.arg.refresh
+        await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{nextUpdataTime})
+      }
       try {
-        let rssJson = await getRssData(rssItem.url)
+        let itemArray = (await Promise.all(rssItem.url.split("|")
+          .map(async url => (await getRssData(url)).rss.channel.item)))
+          .flat(1)
+          .sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
         let arg = mergeArg(rssItem?.arg||{})
         debug(rssItem.lastPubDate);
-        let rssItemArray = rssJson.rss.channel.item.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate)).sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate)).filter((v,i)=>!arg.maxRssItem||i<arg.maxRssItem)
-        // debug(rssJson.rss.channel.item[0]);
+        let rssItemArray = itemArray.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate)).filter((v,i)=>!arg.maxRssItem||i<arg.maxRssItem)
         debug(`共${rssItemArray.length}条新信息`);
         debug(rssItemArray.map(i=>i.title));
         if(rssItem.arg.forceLength){
-          let messageList = await Promise.all(rssItemArray.map(async()=>await parseRssItem(rssItem,{...arg,merge:false},rssItem.author)))
+          let messageList = await Promise.all(itemArray.map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author)))
           let message = rssItem.arg.merge?`<message><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray.slice(-1)[0].pubDate)})
-        }else{
-          if(arg.mergeItem){
-            let message = rssItemArray.forEach(async i => await parseRssItem(i,arg,rssItem.author)); 
-            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward>${message.join('')}</message>`)
-            await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray.slice(-1)[0].pubDate)})
-          }else{
-            rssItemArray.forEach(async i => {
-              // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
-              sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author))
-              await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItem.pubDate)})
-            }); 
-          }
         }
-        
-        // if(rssItemArray.length){
-        //   let lastPubDate = +new Date(rssJson.rss.channel.rssItem[0].pubDate)
-        //   debug(`更新时间:${lastPubDate}`);
-        //   await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate})
-        // }
-        if(rssItem.arg.nextUpdataTime){
-          let nextUpdataTime = rssItem.arg.nextUpdataTime+rssItem.arg.refresh
-          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{nextUpdataTime})
+        if(!rssItemArray.length)continue
+        if(arg.mergeItem){
+          let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,arg,rssItem.author)))
+          sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward>${messageList.join('')}</message>`)
+          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray.slice(-1)[0].pubDate)})
+        }else{
+          rssItemArray.reverse().forEach(async i => {
+            // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
+            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author))
+            await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(i.pubDate)})
+          }); 
         }
       } catch (error) {
-        logger.error(`更新失败:${rssItem}`);
+        logger.error(`更新失败:${JSON.stringify(rssItem) }`);
         logger.error(error);
       }
     }
@@ -247,7 +243,7 @@ const mergeArg = (arg)=>({
     clearInterval(interval)
   })
   ctx.guild()
-    .command('rssowl <url:text>', '订阅 RSS 链接')
+    .command('rssowl <url:text>', '订阅 RSS 链接,订阅链接组时用|隔开')
     .alias('rsso')
     .option('list', '-l 查看订阅列表')
     .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
@@ -275,14 +271,13 @@ const mergeArg = (arg)=>({
       let itemArray,item
       let optionArg = formatArg(options.arg,options.rssItem,options.content)
       let arg = mergeArg(optionArg)
-      // return '1'
+      let urlList = url.split('|')
       if (options.test) {
         debug(`test:${url}`)
         debug({guildId,platform,author,arg,optionArg})
         if(!url)return '请输入URL'
-        rssJson = await getRssData(url)
-        itemArray = rssJson.rss.channel.item
-        item = itemArray[0]
+        itemArray = (await Promise.all(urlList.map(async url => (await getRssData(url)).rss.channel.item))).flat(1)
+        item = itemArray.sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))[0]
         // return await parseRssItem(item,arg,author)
         sendMessageToChannel(ctx,{guildId,platform},await parseRssItem(item,arg,author))
         return
@@ -331,32 +326,38 @@ const mergeArg = (arg)=>({
         author,
         rssId:(+rssList.slice(-1)?.[0]?.rssId||0)+1,
         arg:optionArg,
-        title:options.title||"",
+        title:options.title||(urlList.length>1&&`订阅组:${new Date().toLocaleString()}`)||"",
         lastPubDate:+new Date()
       }
       debug(subscribe);
       if(options.force){
-        ctx.database.create(('rssOwl' as any ),subscribe)
+        await ctx.database.create(('rssOwl' as any ),subscribe)
         return '添加订阅成功'
       }
       try {
-        rssJson = await getRssData(url)
-        if(!rssJson.rss.channel.item[0].pubDate||optionArg.forceLength){
+        if(urlList.length===1){
+          rssJson = await getRssData(url)
+          itemArray = rssJson.rss.channel.item
+          item = rssJson.rss.channel.item[0]
+          subscribe.title = subscribe.title||rssJson.rss.channel.title
+        }else{
+          itemArray = (await Promise.all(urlList.map(async url => (await getRssData(url)).rss.channel.item))).flat(1).sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
+          item = itemArray.sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))[0]
+        }
+        if(!item.pubDate||optionArg.forceLength){
           return "RSS中未找到可用的pubDate，这将导致无法取得更新时间，请使用forceLength属性强制在每次更新时取得最新的订阅内容"
         }
-        subscribe.title = subscribe.title||rssJson.rss.channel.title
-        subscribe.lastPubDate = rssJson?.rss?.channel?.item?.[0]?.pubDate || subscribe.lastPubDate
+        subscribe.lastPubDate = item.pubDate || subscribe.lastPubDate
         ctx.database.create(('rssOwl' as any ),subscribe)
         // rssOwl.push(JSON.stringify(subscribe)) 
         if(arg.firstLoad) {
-          itemArray = rssJson.rss.channel.item
           if(arg.forceLength){
             itemArray = itemArray.filter((v,i)=>i<arg.forceLength)
             let messageList = await Promise.all(itemArray.map(async()=>await parseRssItem(item,{...arg,merge:false},item.author)))
             let message = item.arg.merge?`<message><author id="${item.author}"/>${messageList.join("")}</message>`:messageList.join("")
             return message
           }else{
-            return `<message>添加订阅成功</message>${await parseRssItem(itemArray[0],arg,author)}`
+            return `<message>添加订阅成功</message>${await parseRssItem(item,arg,author)}`
           }
         }
         return '添加订阅成功'
