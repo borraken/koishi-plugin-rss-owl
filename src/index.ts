@@ -97,38 +97,38 @@ export function apply(ctx: Context, config: Config) {
   const feeder = async ()=>{
     const rssList = await ctx.database.get(('rssOwl' as any ),{})
     debug(rssList);
-    for (const item of rssList) {
-      console.log(`${item.platform}:${item.guildId}`);
-      if(item.arg.refresh&&(item.arg.nextUpdataTime>+new Date()))continue
+    for (const rssItem of rssList) {
+      console.log(`${rssItem.platform}:${rssItem.guildId}`);
+      if(rssItem.arg.refresh&&(rssItem.arg.nextUpdataTime>+new Date()))continue
       try {
-        let rssJson = await getRssData(item.url)
-        debug(item.lastPubDate);
-        let itemArray = rssJson.rss.channel.item.filter((v,i)=>item.arg.forceLength?(i<item.arg.forceLength):(+new Date(v.pubDate)>item.lastPubDate))
+        let rssJson = await getRssData(rssItem.url)
+        debug(rssItem.lastPubDate);
+        let rssItemArray = rssJson.rss.channel.item.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate))
         debug(rssJson.rss.channel.item[0]);
-        debug(`共${itemArray.length}条新信息`);
-        let arg = mergeArg(item?.arg||{})
-        if(item.arg.forceLength){
-          let messageList = await Promise.all(itemArray.map(async()=>await parseRssItem(item,{...arg,merge:false},item.author)))
-          let message = item.arg.merge?`<message><author id="${item.author}"/>${messageList.join("")}</message>`:messageList.join("")
+        debug(`共${rssItemArray.length}条新信息`);
+        let arg = mergeArg(rssItem?.arg||{})
+        if(rssItem.arg.forceLength){
+          let messageList = await Promise.all(rssItemArray.map(async()=>await parseRssItem(rssItem,{...arg,merge:false},rssItem.author)))
+          let message = rssItem.arg.merge?`<message><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
-          sendMessageToChannel(ctx,{platform:item.platform,guildId:item.guildId},message)
+          sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
         }else{
-          itemArray.forEach(async item => {
+          rssItemArray.forEach(async i => {
             // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
-            sendMessageToChannel(ctx,{platform:item.platform,guildId:item.guildId},await parseRssItem(item,arg,item.author))
+            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author))
           }); 
         }
         
-        if(itemArray.length){
-          let lastPubDate = +new Date(rssJson.rss.channel.item[0].pubDate)
+        if(rssItemArray.length){
+          let lastPubDate = +new Date(rssJson.rss.channel.rssItem[0].pubDate)
           debug(`更新时间:${lastPubDate}`);
-          await ctx.database.set(('rssOwl' as any ),{id:item.id},{lastPubDate})
+          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate})
         }
-        if(item.arg.nextUpdataTime){
-          let nextUpdataTime = item.arg.nextUpdataTime+item.arg.refresh
-          await ctx.database.set(('rssOwl' as any ),{id:item.id},{nextUpdataTime})
+        if(rssItem.arg.nextUpdataTime){
+          let nextUpdataTime = rssItem.arg.nextUpdataTime+rssItem.arg.refresh
+          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{nextUpdataTime})
         }
-        if(item.arg.refresh&&(item.arg.nextUpdataTime>+new Date()))continue
+        if(rssItem.arg.refresh&&(rssItem.arg.nextUpdataTime>+new Date()))continue
       } catch (error) {
         logger.error(error);
       }
@@ -138,6 +138,7 @@ export function apply(ctx: Context, config: Config) {
   async function sendMessageToChannel(ctx, guild, broadMessage) {
     const targetChannels = await ctx.database.get("channel", guild);
     debug("sendMessageToChannel")
+    debug(guild)
     debug(targetChannels)
     if (targetChannels.length === 1) {
         const bot = ctx.bots.find((bot) => bot.userId === targetChannels[0].assignee);
