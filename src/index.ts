@@ -57,19 +57,19 @@ export interface rssArg {
   forceRead?:number
   rssItem?: Array<string>|never
 }
-
+// export const usage = ``
 export const Config: Schema<Config> = Schema.object({
   // timeout: Schema.number().description('请求数据的最长时间（秒）').default(30),
   refresh: Schema.number().description('刷新订阅源的时间间隔（秒）,订阅配置内仅影响当前订阅').default(600),
   firstLoad:Schema.boolean().description('默认首次订阅时发送最后的更新，可以被订阅配置覆盖').default(true),
   merge:Schema.boolean().description('默认以合并消息发送，可以被订阅配置覆盖').default(true),
   // imageSafety: Schema.boolean().description('风险图片过滤').default(true).experimental(),
-  videoRepost: Schema.boolean().description('允许视频转发，关闭后无视订阅配置不会转发视频').default(false).experimental(),
   // userAgent: Schema.string().role('link').description('默认请求的userAgent').experimental(),
   // proxyAgent: Schema.string().role('link').description('默认请求的代理地址').experimental(),
   toImg: Schema.boolean().description("使用 puppeteer 插件将description转换成图片发送。请确保 puppeteer 服务已加载。在 puppeteer 插件设置页面中调节转换成图片的详细设置（如图片宽度），可以被订阅配置覆盖 ").default(false),
+  videoRepost: Schema.boolean().description('允许视频转发').default(false).experimental(),
   useCss: Schema.boolean().description('使用rss内的css进行puppeteer渲染 开发中').default(false).experimental(),
-  maxRssItem: Schema.number().description('限制单个RSS链接更新时发送条数上限防止刷屏(0表示不限制)，可以被订阅配置覆盖').default(5).experimental(),
+  maxRssItem: Schema.number().description('限制单个RSS链接更新时发送条数上限防止刷屏(0表示不限制)，可以被订阅配置覆盖').default(10).experimental(),
   rssItem: Schema.dict(Boolean).description('会按照这里给出的 item 中的key，按顺序提取出 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 拼装成一起（每项之间会加换行符）并推送至订阅该源的频道。 关闭key右边的开关会使 rss-owl 忽略这个key，可以被订阅配置覆盖').default({"title":true,"author":false,"pubDate":false,"link":false,"guid":false,"description":true}).description('推送单条更新时的排版'),
   debug:Schema.boolean().description('调试开关').default(false),
 
@@ -102,34 +102,38 @@ export function apply(ctx: Context, config: Config) {
       if(rssItem.arg.refresh&&(rssItem.arg.nextUpdataTime>+new Date()))continue
       try {
         let rssJson = await getRssData(rssItem.url)
-        debug(rssItem.lastPubDate);
-        let rssItemArray = rssJson.rss.channel.item.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate))
-        debug(rssJson.rss.channel.item[0]);
-        debug(`共${rssItemArray.length}条新信息`);
         let arg = mergeArg(rssItem?.arg||{})
+        debug(rssItem.lastPubDate);
+        let rssItemArray = rssJson.rss.channel.item.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate)).filter((v,i)=>!arg.maxRssItem||i<arg.maxRssItem).reverse()
+        // debug(rssJson.rss.channel.item[0]);
+        debug(`共${rssItemArray.length}条新信息`);
+        debug(rssItemArray.map(i=>i.title));
         if(rssItem.arg.forceLength){
           let messageList = await Promise.all(rssItemArray.map(async()=>await parseRssItem(rssItem,{...arg,merge:false},rssItem.author)))
           let message = rssItem.arg.merge?`<message><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
+          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray[0].pubDate)})
         }else{
           rssItemArray.forEach(async i => {
             // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
             sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author))
+            await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItem.pubDate)})
           }); 
         }
         
-        if(rssItemArray.length){
-          let lastPubDate = +new Date(rssJson.rss.channel.rssItem[0].pubDate)
-          debug(`更新时间:${lastPubDate}`);
-          await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate})
-        }
+        // if(rssItemArray.length){
+        //   let lastPubDate = +new Date(rssJson.rss.channel.rssItem[0].pubDate)
+        //   debug(`更新时间:${lastPubDate}`);
+        //   await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate})
+        // }
         if(rssItem.arg.nextUpdataTime){
           let nextUpdataTime = rssItem.arg.nextUpdataTime+rssItem.arg.refresh
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{nextUpdataTime})
         }
         if(rssItem.arg.refresh&&(rssItem.arg.nextUpdataTime>+new Date()))continue
       } catch (error) {
+        logger.error(`更新失败:${rssItem}`);
         logger.error(error);
       }
     }
@@ -330,7 +334,7 @@ export function apply(ctx: Context, config: Config) {
             let message = item.arg.merge?`<message><author id="${item.author}"/>${messageList.join("")}</message>`:messageList.join("")
             return message
           }else{
-            return `<message>添加订阅成功</message>${await parseRssItem(itemArray[0],arg,author)}`
+            return `<message>添加订阅成功</message>${(itemArray[0].pubDate||optionArg.forceLength)?"":"<message>RSS中未找到可用的pubDate，这会导致无法取得更新时间，建议使用forceLength属性强制在每次更新时取得订阅内容</message>"}${await parseRssItem(itemArray[0],arg,author)}`
           }
         }
         return '添加订阅成功'
