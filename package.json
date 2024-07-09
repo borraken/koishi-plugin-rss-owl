@@ -1,22 +1,30 @@
 {
   "name": "koishi-plugin-rss-owl",
   "description": "",
-  "version": "0.0.1",
+  "version": "0.0.29",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
-    "lib",
-    "dist"
+    "lib"
   ],
+  "koishi": {
+    "description": {
+      "zh": "描述"
+    },
+    "preview": true
+  },
   "license": "MIT",
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
     "plugin"
   ],
-  "devDependencies": {},
   "peerDependencies": {
-    "koishi": "^4.17.9"
+    "koishi": "^4.17.7"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "koishi-plugin-puppeteer": "^3.8.4",
+    "x2js": "^3.4.4"
   }
 }
