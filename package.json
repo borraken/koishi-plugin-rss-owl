@@ -4,10 +4,10 @@
   "version": "0.0.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
-  "contributors":[],
-  "repository":{
-    "type":"git",
-    "url":"git+https://github.com/borraken/koishi-plugin-rss-owl.git"
+  "contributors": [],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/borraken/koishi-plugin-rss-owl.git"
   },
   "files": [
     "lib"
@@ -16,7 +16,7 @@
     "description": {
       "zh": "练习用的rss订阅器,支持合并转发/puppeteer等功能,求求你别出bug"
     },
-    "preview":true
+    "preview": true
   },
   "license": "MIT",
   "keywords": [

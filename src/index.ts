@@ -25,20 +25,25 @@ declare module 'koishi' {
 }
 
 export interface Config {
-  // timeout?: number
+  timeout?: number
   refresh?: number
-  userAgent?: string
   firstLoad?: boolean
   merge?: boolean
   mergeItem?: boolean
+  maxRssItem?:number
   urlDeduplication?: boolean
-  censor?: boolean
-  videoRepost?: boolean
+  userAgent?: string
   proxyAgent?: string
   toHTML?: boolean
-  // useCss?: boolean
+  onlySelf?: boolean
+  censor?: boolean
+  videoRepost?: boolean
+  videoFetch?: boolean
+  keywordFilter?: Array<string>
   rssItem?: object
-  maxRssItem?:number
+  custom?: string
+  customUrlEnable?: boolean
+  quickUrl?: Object
   debug?: boolean
 }
 export interface rss {
@@ -77,7 +82,7 @@ export const Config: Schema<Config> = Schema.object({
   censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   videoRepost: Schema.boolean().description('允许发送视频(警告:视频内容无法审查，可能含有敏感信息导致封号)，目前在QQ中难以使用').default(false),
   videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
-  keywordFilter: Schema.array(Schema.string()).description('关键字过滤，item中title和description中含有关键字时不会推送，支持正则表达式，不区分大小写').default(['nsfw']).experimental(),
+  keywordFilter: Schema.array(Schema.string()).description('关键字过滤，item中title和description中含有关键字时不会推送，不区分大小写').default(['nsfw']).experimental(),
   rssItem: Schema.dict(Boolean).description('提取item中的key和channel中的key，按顺序提取并推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 。关闭key右边的开关会使 rss-owl 忽略这个key').default({"channel.title":false,"title":false,"author":false,"pubDate":false,"link":false,"guid":false,"description":true,"custom":false}).description('推送单条更新时的排版'),
   custom:Schema.string().role('textarea').default('<div style="background:url({{rss.channel.image.url}}) ;background-size: 100%, 100%;"><div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);"><div style="display: flex;align-items: center;"><img src="{{rss.channel.image.url}}" style="margin-right: 10px;" alt="" srcset="" /><div><p style="font-size: x-large;font-weight: bold;color: white;">{{rss.channel.title}}</p><p style="color: white;">{{rss.channel.description}}</p></div></div><div style="color: white;">{{description}}</div></div></div>').description('rssItem中custom的内容，根据当前配置使用puppeteer，使用插值调用rssItem中所有内容，在订阅配置<arg>中设置局部参数时使用&nbsp;代替空格'),
   customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
@@ -85,9 +90,9 @@ export const Config: Schema<Config> = Schema.object({
     Schema.object({enabled: Schema.boolean().default(false),}).description('开发中：允许使用快速订阅'),
     Schema.union([Schema.object({
       enabled: Schema.const(true).required(),
-      rssHubUrl:Schema.string().role('link').description('rssHub的地址').default('https://rsshub.rssforever.com/').experimental(),
+      rssHubUrl:Schema.string().role('link').description('rssHub的地址').default('https://rsshub.rssforever.com').experimental(),
       biliVideoSubmission:Schema.boolean().description('通过 bili://<用户id> 订阅b站用户视频更新，内置arg规则，例：rsso bili://2267573').default(true).experimental(),
-    })]),
+    }),Schema.object({}),]),
   ]).experimental(),
   debug:Schema.boolean().description('调试开关').default(false),
 })
