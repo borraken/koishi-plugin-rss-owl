@@ -73,6 +73,7 @@ export const Config: Schema<Config> = Schema.object({
   userAgent: Schema.string().role('link').description('默认请求的userAgent').experimental(),
   proxyAgent: Schema.string().role('link').description('请求的代理地址').experimental(),
   toHTML: Schema.boolean().description("渲染成网页发送，需要puppeteer服务。在 puppeteer 插件设置页面中调节转换成图片的详细设置（如图片宽度），在不启用的情况下将分开发送图片，建议开启以获得更稳定的体验").default(false),
+  onlySelf: Schema.boolean().description('仅允许主人操作').default(false).experimental(),
   censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   videoRepost: Schema.boolean().description('允许发送视频(警告:视频内容无法审查，可能含有敏感信息导致封号)，目前在QQ中难以使用').default(false),
   videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
