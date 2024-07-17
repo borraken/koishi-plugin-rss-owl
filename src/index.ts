@@ -1,16 +1,14 @@
 import { Context, Session, Logger, Schema, MessageEncoder, h } from 'koishi'
 import axios from 'axios'
-import type {AxiosError, AxiosInstance, AxiosResponse, AxiosRequestConfig, InternalAxiosRequestConfig} from 'axios'
 import * as cheerio from 'cheerio';
 import { } from 'koishi-plugin-puppeteer'
-import { error } from 'console';
+import { } from '@koishijs/censor'
 const X2JS = require("x2js")
 const x2js = new X2JS()
 const logger = new Logger('rss-owl')
 export const name = 'RSS-OWL'
 // export const using = ['database'] as const
 export const inject = {required:["database"] ,optional: ["puppeteer","censor"]}
-const HttpsProxyAgent = require('https-proxy-agent');
 
 declare module 'koishi' {
   interface rssOwl {
@@ -37,7 +35,8 @@ export interface Config {
   userAgent?: string
   proxyAgent?: proxyAgent
   toHTML?: boolean
-  onlySelf?: boolean
+  domFrame?: string
+  onlySelf?: any
   censor?: boolean
   videoRepost?: boolean
   videoFetch?: boolean
@@ -96,14 +95,33 @@ export const Config: Schema<Config> = Schema.object({
   mergeItem:Schema.boolean().description('单RSS订阅有多条更新时以合并消息发送，不同订阅链接间不会合并').default(true),
   maxRssItem: Schema.number().description('限制单RSS订阅更新时的最大数量上限，超出上限时靠后的更新会被忽略，防止意外情况导致刷屏(0表示不限制)').default(10),
   urlDeduplication:Schema.boolean().description('同群组中不允许添加多条相同订阅').default(true),
-  toHTML: Schema.boolean().description("渲染成网页发送，需要puppeteer服务。在 puppeteer 插件设置页面中调节转换成图片的详细设置（如图片宽度），在不启用的情况下将分开发送图片，建议开启以获得更稳定的体验").default(false),
-  onlySelf: Schema.boolean().description('仅允许主人操作').default(false).experimental(),
+  toHTML: Schema.boolean().description("渲染成网页发送，需要puppeteer服务。在不启用的情况下将分开发送文字图片，建议开启以获得更稳定的体验").default(false),
+  domFrame: Schema.string().role('textarea').default('<body style="width:400px;padding:20px">{{description}}</body>').description("使用puppeteer时添加外层dom以获取更好的手机阅读体验，仅支持 `{{description}}` 插值，custom中不会生效，请注意区分"),
+  onlySelf: Schema.intersect([
+    Schema.object({enabled: Schema.boolean().default(false).description('仅允许指定用户操作').experimental(),}),
+    Schema.union([Schema.object({
+      enabled: Schema.const(true).required(),
+      rssHubUrl:Schema.dict(Boolean).description('按照 平台:用户id 写入，用户id与rssOwl数据库中的author相同').default({"onebot:10000":false}),
+    }),Schema.object({}),]),
+  ]).experimental(),
   censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   videoRepost: Schema.boolean().description('允许发送视频').default(false),
-  videoFetch: Schema.boolean().description('视频本地转发').default(false).experimental(),
+  videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
   keywordFilter: Schema.array(Schema.string()).description('关键字过滤，item中title和description中含有关键字时不会推送，不区分大小写').default(['nsfw']).experimental(),
   rssItem: Schema.dict(Boolean).description('提取item中的key和channel中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 。关闭key右边的开关会使 rss-owl 忽略这个key').default({"channel.title":false,"title":false,"author":false,"pubDate":false,"link":false,"description":true,"custom":false}),
-  custom:Schema.string().role('textarea').default('<div style="background:url({{rss.channel.image.url}}) ;background-size: 100%, 100%;"><div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);"><div style="display: flex;align-items: center;"><img src="{{rss.channel.image.url}}" style="margin-right: 10px;" alt="" srcset="" /><div><p style="font-size: x-large;font-weight: bold;color: white;">{{rss.channel.title}}</p><p style="color: white;">{{rss.channel.description}}</p></div></div><div style="color: white;">{{description}}</div></div></div>').description('rssItem中custom的内容，根据当前配置使用puppeteer，使用插值调用rssItem中所有内容，订阅时使用`\\s`代替空格'),
+  custom:Schema.string().role('textarea').default(`<body style="width:400px;padding:20px;background:#F5ECCD;">
+    <div style="display: flex;flex-direction: column;">
+        <div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);display: flex;align-items: center;flex-direction: column;border-radius: 10px;border: solid;overflow:hidden">
+            <div style="display: flex;align-items: center;">
+                <img src="{{rss.channel.image.url}}" style="margin-right: 10px;object-fit: scale-down;max-height: 160px;max-width: 160px;" alt="" srcset="" />
+                <p style="font-size: 20px;font-weight: bold;color: white;">{{rss.channel.title}}</p>
+            </div>
+            <p style="color: white;font-size: 16px;">{{rss.channel.description}}</p>
+        </div>
+        <div style="font-weight: bold;">{{title}}:{{pubDate}}</div>
+        <div style="">{{description}}</div>
+    </div>
+</body>`).description('rssItem中custom的内容，根据当前配置使用puppeteer，使用插值调用rssItem中所有内容，订阅时使用`&nbsp;`代替空格'),
   customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
   quickUrl:Schema.intersect([
     Schema.object({enabled: Schema.boolean().default(false).description('开发中：允许使用快速订阅').experimental(),}),
@@ -162,28 +180,29 @@ export function apply(ctx: Context, config: Config) {
     const rssList = await ctx.database.get(('rssOwl' as any ),{})
     debug(rssList);
     for (const rssItem of rssList) {
-      console.log(`${rssItem.platform}:${rssItem.guildId}`);
+      // console.log(`${rssItem.platform}:${rssItem.guildId}`);
+      let arg = mixinArg(rssItem.arg||{})
       if(rssItem.arg.refresh){
-        if(rssItem.arg.nextUpdataTime>+new Date())continue
-        let nextUpdataTime = rssItem.arg.nextUpdataTime+rssItem.arg.refresh
+        if(arg.nextUpdataTime>+new Date())continue
+        let nextUpdataTime = arg.nextUpdataTime+arg.refresh
         await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{nextUpdataTime})
       }
       try {
-        let itemArray = (await Promise.all(rssItem.url.split("|")
-          .map(async url => (await getRssData(url,rssItem.arg)).rss.channel.item)))
-          .flat(1)
+        let rssJsonArray = (await Promise.all(rssItem.url.split("|")
+        .map(async url => await getRssData(url,arg))))
+        let itemArray = rssJsonArray.map(i=>i.rss.channel.item).flat(1)
           .sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
-        let arg = mixinArg(rssItem?.arg||{})
+          .filter(item=>!arg.keywordFilter.find(keyword=>new RegExp(keyword,'im').test(item.title)||new RegExp(keyword,'im').test(item.description)))
         debug(rssItem.lastPubDate);
         debug("itemArray");
         debug(itemArray[0]);
-        let rssItemArray = itemArray.filter((v,i)=>rssItem.arg.forceLength?(i<rssItem.arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate)).filter((v,i)=>!arg.maxRssItem||i<arg.maxRssItem)
+        let rssItemArray = itemArray.filter((v,i)=>arg.forceLength?(i<arg.forceLength):(+new Date(v.pubDate)>rssItem.lastPubDate)).filter((v,i)=>!arg.maxRssItem||i<arg.maxRssItem)
         debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`);
         debug(rssItemArray.map(i=>i.title));
         if(rssItem.arg.forceLength){
           debug("forceLength");
-          let messageList = await Promise.all(itemArray.filter((v,i)=>i<arg.rssItem.arg.forceLength).map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author)))
-          let message = rssItem.arg.merge?`<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
+          let messageList = await Promise.all(itemArray.filter((v,i)=>i<arg.forceLength).map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
+          let message = arg.merge?`<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(itemArray?.[0]?.pubDate||0)})
@@ -191,7 +210,7 @@ export function apply(ctx: Context, config: Config) {
         if(!rssItemArray.length)continue
         if(arg.mergeItem){
           debug("mergeItem");
-          let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author)))
+          let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
           debug(messageList.map(i=>i.slice(0,100)))
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward><author id="${rssItem.author}"/>${messageList.join('')}</message>`)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray[0].pubDate)})
@@ -199,13 +218,13 @@ export function apply(ctx: Context, config: Config) {
           debug("default");
           rssItemArray.reverse().forEach(async i => {
             // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
-            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author))
+            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author,Object.assign({},...rssJsonArray)))
             await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(i.pubDate)})
           }); 
         }
       } catch (error) {
-        logger.error(`更新失败:${JSON.stringify(rssItem) }`);
-        logger.error(error);
+        debug(`更新失败:${JSON.stringify(rssItem) }`)
+        debug(error)
       }
     }
   }
@@ -230,7 +249,9 @@ export function apply(ctx: Context, config: Config) {
 }
 const $http = async (url,arg,config={})=>{
   let requestConfig = {timeout:arg.timeout*1000}
-  if(arg.proxyAgent.enabled){
+  // console.log(arg);
+  
+  if(arg?.proxyAgent?.enabled){
     requestConfig['proxy'] = {
       "protocol": arg.proxyAgent.protocol,
       "host": arg.proxyAgent.host,
@@ -258,62 +279,74 @@ const getRssData = async(url,config)=>{
   // let rssJson = x2js.xml2js(rssText)
   // console.log(rssXML);
   let res = await $http(url,config)
-  // console.log(res);
   let rssJson = x2js.xml2js(res)
-  // console.log(rssJson);
-  
   return rssJson
 }
-const parseRssItem = async(item:object,arg:rssArg,authorId:string|number)=>{
+const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJson:object)=>{
   debug("parseRssItem");
-  let messageItem = Object.assign({},...arg.rssItem.map(key=>({[key]:item[key]??""})))
+  let messageItem = Object.assign({},...arg.rssItem.map(key=>({[key]:item[key.split(":")[0]]??""})))
   let message = await Promise.all(Object.keys(messageItem).map(async key=>{
-    if(key == 'description'){
+    if(['description','custom'].find(i=>i==key.split(":")[0])){
       debug("description");
+      let msg
       let videoMessage = ''
-      const html = cheerio.load(messageItem[key].join?messageItem[key].join(""):messageItem[key])
+      let content = key.split(":")[1]||arg?.content
+
+      content = (["html","default","image","text","video","proto"]).find(i=>i===content)?content:(ctx.puppeteer&&config.toHTML)?"html":"default"
+      let description,html
+      description = item.description?.join?item.description.join(""):item.description
+      if(key.split(":")[0] == 'custom'){
+        description = arg.custom.replace("&nbsp;"," ")
+        .replace(/{{(.+?)}}/g,i=>(/[a-zA-Z\.]+/.exec(i)[0].split(".")
+          .reduce((t,v,i,a)=>i==0?(a[0]=='rss'?sourceRssJson[v]:(v=='item.description'?description:item[v])):t[v],"")
+        ))
+        html = cheerio.load(description)
+      }else{
+        html = cheerio.load(config?.domFrame?.replace("{{description}}",description)||description)
+      }
+      // console.log(description);
+      
+      debug(html.xml())
       debug("cheerio.load");
-      if(arg.videoRepost&&arg?.content!=='image'&&arg?.content!=='text'){
+      if(arg.videoRepost&&(["html","default","video"]).find(i=>i===content)){
+        debug("videoRepost");
         videoMessage = [...html('video').map((v,i)=>i.attribs.src)].map(i=>`<message><author id="${authorId}"/><video src="${i}"/></message>`).join("")
       }
-      debug("videoRepost");
       // console.log(arg);
-      if(!arg.content&&ctx.puppeteer&&config.toHTML){
+      if(content==='html'){
           //puppeteer
-          
-          // let proxyHtml = 
-          // let html = messageItem[key]
             debug("puppeteer");
           if(arg.proxyAgent.enabled){
             debug("puppeteer:proxyAgent");
             await Promise.all(html('img').map(async(v,i)=>i.attribs.src = `data:image/jpeg;base64, ${Buffer.from(await $http(i.attribs.src,arg,{responseType: 'arraybuffer'}), 'binary').toString('base64')}` )) 
-            console.log(html.xml());
-            return `<message><author id="${authorId}"/>${await ctx.puppeteer.render(`<html>${html.xml()}</html>`)}</message>${videoMessage}`
+            html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
           }
-          return `<message><author id="${authorId}"/>${await ctx.puppeteer.render(`<html>${messageItem[key]}</html>`)}</message>${videoMessage}`
-      }else if(!arg.content||arg.content=='default'){
+          msg =  `<message><author id="${authorId}"/>${await ctx.puppeteer.render(html.xml())}</message>${videoMessage}`
+      }else if(content=='default'){
         let text = `<message><author id="${authorId}"/>${html.text()}</message>`
-        // console.log(imgBuffer);
-        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await(await $http(i,arg,{responseType: 'arraybuffer'}))))
-        // console.log(imgBuffer);
-        
+        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
         let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
-        return text+imgMessage
-      }else if(arg.content=='text'){
-            return `<message><author id="${authorId}"/>${html.text()}</message>`
-      }else if(arg.content=='image'){
-        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await(await $http(i,arg,{responseType: 'arraybuffer'}))))
+        msg = text+imgMessage
+      }else if(content=='text'){
+        msg =  `<message><author id="${authorId}"/>${html.text()}</message>`
+      }else if(content=='image'){
+        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
         let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
-        return imgMessage
-      }else if(arg.content=='proto'){
-        return `<message><author id="${authorId}"/>${messageItem[key]}${videoMessage}</message>`
+        msg =  imgMessage
+      }else if(content=='proto'){
+        msg =  `<message><author id="${authorId}"/>${description}${videoMessage}</message>`
       }else{
-        return `<message>无效的content参数:${arg.content}</message>`
+        msg = `<message>无效的content参数:${content}</message>`
       }
+      return key?.split(":")?.[2]=='merge'?`<message forward><author id="${authorId}"/>${msg}</message>`:msg
     }
     return `<message><author id="${authorId}"/>${messageItem[key]}</message>`
   }))
-  return arg.merge?`<message forward><author id="${authorId}"/>${message.join('')}</message>`:message
+  let msg = arg.merge?`<message forward><author id="${authorId}"/>${message.join('')}</message>`:message
+  if(config.censor){
+    return `<censor>${msg}</censor>`
+  }
+  return msg
 }
 const formatArg = (arg:string,rssItem:string,content:string)=>{
   let json = Object.assign({},...(arg?.split(',')?.map(i=>({[i.split(":")[0]]:i.split(":")[1]}))||[]))
@@ -358,10 +391,10 @@ const mixinArg = (arg)=>({
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
     // await sendMessageToChannel(ctx,{platform:"sandbox:rdbvu1xb9nn",guildId:"#"},"123")
-  // feeder()
-  //   interval = setInterval(async()=>{
-  //     feeder()
-  //   },config.refresh*1000)
+  feeder()
+    interval = setInterval(async()=>{
+      feeder()
+    },config.refresh*1000)
   })
   ctx.on('dispose', async () => {
     clearInterval(interval)
@@ -369,14 +402,14 @@ const mixinArg = (arg)=>({
   ctx.guild()
     .command('rssowl <url:text>', '订阅 RSS 链接或链接组,订阅链接组时用|隔开')
     .alias('rsso')
-    .usage('注意：参数请写在最前面,不然会被当成 url 的一部分！')
+    .usage('注意：参数请写在最前面，不然会被当成 url 的一部分，嵌套合并消息可能会出问题，请尽量避免')
     .option('list', '-l 查看订阅列表')
     .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
-    .option('removeAll', '全部删除')
+    .option('removeAll', '全部删除订阅')
     .option('arg', '-a <content>自定义配置(https://github.com/borraken/koishi-plugin-rss-owl),额外参数[forceLength,reverse]')
-    .option('rssItem', '-i <content>自定义提取')
+    .option('rssItem', '-i <content>自定义提取,例:-i title,description:text:merge,custom')
     .option('keywordFilter', '-k <content>自定义过滤规则')
-    .option('content', '-c <content>[default|text|image|video|proto] description内容提取')
+    .option('content', '-c <content>[default|html|text|image|video|proto] description内容提取')
     .option('title', '-t <content>自定义命名')
     .option('force', '强行写入,不通过链接可用性验证')
     // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
@@ -392,6 +425,12 @@ const mixinArg = (arg)=>({
       const { platform } = session.event as any
       const { id :author } = session.event.user as any
       debug(`${platform}:${author}:${guildId}`)
+      if(config.onlySelf?.enabled){
+        let user = `${platform}:${author}`
+        if(!Object.keys(config.onlySelf).find(i=>i==user)){
+          return `用户 ${user} 无权限`
+        }
+      }
       if((platform.indexOf("sandbox")+1)&&!options.test){
         logger.error('沙盒中无法获取平台信息，RSS将被订阅但不会发送，仅首次订阅和test可用')
       }
@@ -406,8 +445,9 @@ const mixinArg = (arg)=>({
         debug(`test:${url}`)
         debug({guildId,platform,author,arg,optionArg})
         if(!url)return '请输入URL'
-        let itemArray = (await Promise.all(url.split("|")
-          .map(async url => (await getRssData(url,arg)).rss.channel.item)))
+        let rssJsonArray = await Promise.all(url.split("|")
+        .map(async url =>await getRssData(url,arg)))
+        let itemArray = rssJsonArray.map(i=>i.rss.channel.item)
           .flat(1)
           .sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
         debug("itemArray");
@@ -415,10 +455,10 @@ const mixinArg = (arg)=>({
         let rssItemArray = itemArray.filter((v,i)=>arg.forceLength?(i<arg.forceLength):(i<1)).filter((v,i)=>arg.maxRssItem?(i<arg.maxRssItem):true)
         debug("rssItemArray");
         debug(rssItemArray);
-        let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},author)))
+        let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},author,Object.assign({},...rssJsonArray))))
         debug("mergeItem");
         debug(messageList)
-        return `<message forward><author id="${author}"/>${messageList.join('')}</message>`
+        return `<message forward><author id="${author}"/>${messageList.flat(Infinity).join('')}</message>`
       }
       if (options.remove) {
         debug(`remove:${options.remove}`)
@@ -430,10 +470,7 @@ const mixinArg = (arg)=>({
           return `未找到${options.remove}`
         }
         let removeItem =  rssList[removeIndex]
-        // clearInterval(intervalList.find(i=>i.id==removeItem.id))
-        // intervalList.splice(intervalList.findIndex(i=>i.id==removeItem.id),1)
         ctx.database.remove(('rssOwl' as any ), removeItem)
-        // rss.splice(removeIndex-1, 1)
         return '取消订阅成功！'
       }
       if(options?.removeAll!=undefined){
@@ -446,7 +483,7 @@ const mixinArg = (arg)=>({
       if (options.list) {
         debug(`list`)
         if (!rssList.length) return '未订阅任何链接。'
-        return rssList.map(i=>`${i.rssId}:${i.title||i.url}`).join('\n')
+        return "id:标题(订阅最新一条更新时间)\n"+rssList.map(i=>`${i.rssId}:${i.title||i.url} (${new Date(i.lastPubDate).toLocaleString()})`).join('\n')
       }
       if(config.urlDeduplication&& (rssList.findIndex(i=>i.url==url)+1)){
         return '已订阅此链接。'
@@ -479,7 +516,8 @@ const mixinArg = (arg)=>({
           item = rssJson.rss.channel.item[0]
           subscribe.title = subscribe.title||rssJson.rss.channel.title
         }else{
-          itemArray = (await Promise.all(urlList.map(async url => (await getRssData(url,arg)).rss.channel.item))).flat(1).sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
+          rssJson = await Promise.all(urlList.map(async url =>await getRssData(url,arg)))
+          itemArray = rssJson.map(i=>i.rss.channel.item).flat(1).sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
           item = itemArray.sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))[0]
         }
         if(!item.pubDate||optionArg.forceLength){
@@ -491,11 +529,11 @@ const mixinArg = (arg)=>({
         if(arg.firstLoad) {
           if(arg.forceLength){
             itemArray = itemArray.filter((v,i)=>i<arg.forceLength)
-            let messageList = await Promise.all(itemArray.map(async()=>await parseRssItem(item,{...arg,merge:false},item.author)))
+            let messageList = await Promise.all(itemArray.map(async()=>await parseRssItem(item,{...arg,merge:false},item.author,rssJson)))
             let message = item.arg.merge?`<message><author id="${item.author}"/>${messageList.join("")}</message>`:messageList.join("")
             return message
           }else{
-            return `<message>添加订阅成功</message>${await parseRssItem(item,arg,author)}`
+            return `<message>添加订阅成功</message>${await parseRssItem(item,arg,author,rssJson)}`
           }
         }
         return '添加订阅成功'
