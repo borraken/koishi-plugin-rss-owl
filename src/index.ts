@@ -250,7 +250,7 @@ export function apply(ctx: Context, config: Config) {
 const $http = async (url,arg,config={})=>{
   let requestConfig = {timeout:arg.timeout*1000}
   // console.log(arg);
-  
+  debug("http")
   if(arg?.proxyAgent?.enabled){
     requestConfig['proxy'] = {
       "protocol": arg.proxyAgent.protocol,
@@ -268,6 +268,7 @@ const $http = async (url,arg,config={})=>{
     requestConfig['header'] = {'User-Agent':arg.userAgent}
   }
   // debug(requestConfig);
+  debug(`${url} : ${JSON.stringify({...requestConfig,...config})}`)
   let res = await axios.get(url,{...requestConfig,...config})
   // console.log(res);
   
@@ -299,7 +300,7 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
       let html
       if(itemKey == 'custom'){
         description = arg.custom.replace(/{{(.+?)}}/g,i=>(/[a-zA-Z\.]+/.exec(i)[0].split(".")
-          .reduce((t,v,i,a)=>i==0?(a[0]=='rss'?sourceRssJson[v]:(v=='item.description'?description:item[v])):t[v],"")
+          .reduce((t,v,i,a)=>(i==0?(a[0]=='rss'?sourceRssJson?.[v]:item?.[v]):t?.[v])||"","")
         ))
         html = cheerio.load(description)
       }else{
@@ -366,17 +367,25 @@ const formatArg = (arg:string,rssItem:string,content:string)=>{
   if(json.forceLength){
     json.forceLength = parseInt(json.forceLength)
   }
-  if(json.proxyAgent&&json.proxyAgent.enabled===true){
-    let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=:\/\/)/)
-    let host = json.proxyAgent.match(/(?<=:\/\/)(.*)(?=:)/)
-    let port = +json.proxyAgent.match(/(?<=:)(\d{1,5})$/)
-    let proxyAgent = {protocol,host,port}
-    json.proxyAgent = proxyAgent
-    if(json.auth&&json.auth.enabled===true){
-      let username = json.auth.split(":")[0]
-      let password = json.auth.split(":")[1]
-      let auth = {username,password}
-      json.proxyAgent.auth = auth
+  if(json.proxyAgent){
+    debug("formatArg:proxyAgent");
+    debug(json.proxyAgent);
+    
+    if(json.proxyAgent=='false'||json.proxyAgent=='none'||json.proxyAgent==''){
+      debug("enabled:false");
+      json.proxyAgent = {enabled:false}
+    }else{
+      let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=:\/\/)/)
+      let host = json.proxyAgent.match(/(?<=:\/\/)(.*)(?=:)/)
+      let port = +json.proxyAgent.match(/(?<=:)(\d{1,5})$/)
+      let proxyAgent = {enabled:true,protocol,host,port}
+      json.proxyAgent = proxyAgent
+      if(json.auth){
+        let username = json.auth.split("/")[0]
+        let password = json.auth.split("/")[1]
+        let auth = {username,password}
+        json.proxyAgent.auth = auth
+      }
     }
   }
   if(json.custom){
@@ -390,7 +399,7 @@ const mixinArg = (arg)=>({
   rssItem:arg.rssItem||Object.keys(config.rssItem).filter(i=>config.rssItem[i]),
   videoRepost:config.videoRepost&&arg.videoRepost,
   toHTML:config.toHTML&&(arg.toHTML||true),
-  proxyAgent:arg.proxyAgent?{...arg.proxyAgent,auth:arg.proxyAgent.auth.enabled?arg.proxyAgent.auth:{}}:config.proxyAgent.enabled?{...config.proxyAgent,auth:config.proxyAgent.auth.enabled?config.proxyAgent.auth:{}}:{}
+  proxyAgent:arg.proxyAgent?(arg.proxyAgent.enabled?arg.proxyAgent:{enabled:false}):config.proxyAgent.enabled?{...config.proxyAgent,auth:config.proxyAgent.auth.enabled?config.proxyAgent.auth:{}}:{}
 })
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
