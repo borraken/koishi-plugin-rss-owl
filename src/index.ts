@@ -93,7 +93,7 @@ export const Config: Schema<Config> = Schema.object({
   firstLoad:Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
   merge:Schema.boolean().description('更新以合并消息发送，建议在rssItem多于1时开启').default(false),
   mergeItem:Schema.boolean().description('单RSS订阅有多条更新时以合并消息发送，不同订阅链接间不会合并').default(true),
-  maxRssItem: Schema.number().description('限制单RSS订阅更新时的最大数量上限，超出上限时靠后的更新会被忽略，防止意外情况导致刷屏(0表示不限制)').default(10),
+  maxRssItem: Schema.number().description('限制单RSS订阅更新时的最大推送数量上限，超出上限时较早的更新会被忽略，防止意外情况导致刷屏(0表示不限制)').default(10),
   urlDeduplication:Schema.boolean().description('同群组中不允许添加多条相同订阅').default(true),
   toHTML: Schema.boolean().description("渲染成网页发送，需要puppeteer服务。在不启用的情况下将分开发送文字图片，建议开启以获得更稳定的体验").default(false),
   domFrame: Schema.string().role('textarea').default('<body style="width:400px;padding:20px">{{description}}</body>').description("使用puppeteer时添加外层dom以获取更好的手机阅读体验，仅支持 `{{description}}` 插值，custom中不会生效，请注意区分"),
@@ -105,7 +105,7 @@ export const Config: Schema<Config> = Schema.object({
     }),Schema.object({}),]),
   ]).experimental(),
   censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
-  videoRepost: Schema.boolean().description('允许发送视频').default(false),
+  videoRepost: Schema.boolean().description('允许发送视频，关闭时建议在关键字过滤中添加 `<video.+>` 以忽略相关推送').default(false),
   videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
   keywordFilter: Schema.array(Schema.string()).description('关键字过滤，item中title和description中含有关键字时不会推送，不区分大小写').default(['nsfw']).experimental(),
   rssItem: Schema.dict(Boolean).description('提取item中的key和channel中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 。关闭key右边的开关会使 rss-owl 忽略这个key').default({"channel.title":false,"title":false,"author":false,"pubDate":false,"link":false,"description":true,"custom":false}),
@@ -208,10 +208,10 @@ export function apply(ctx: Context, config: Config) {
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(itemArray?.[0]?.pubDate||0)})
         }
         if(!rssItemArray.length)continue
-        if(arg.mergeItem){
+        if(arg.mergeItem&&rssItemArray.length>1){
           debug("mergeItem");
           let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
-          debug(messageList.map(i=>i.slice(0,100)))
+          // debug(messageList.map(i=>i.slice(0,100)))
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward><author id="${rssItem.author}"/>${messageList.join('')}</message>`)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray[0].pubDate)})
         }else{
@@ -282,67 +282,68 @@ const getRssData = async(url,config)=>{
   let rssJson = x2js.xml2js(res)
   return rssJson
 }
-const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJson:object)=>{
-  debug("parseRssItem");
+const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJson:any)=>{
+  debug(`parseRssItem:start (${sourceRssJson.rss.channel.title})`);
   let messageItem = Object.assign({},...arg.rssItem.map(key=>({[key]:item[key.split(":")[0]]??""})))
   let message = await Promise.all(Object.keys(messageItem).map(async key=>{
-    if(['description','custom'].find(i=>i==key.split(":")[0])){
-      debug("description");
-      let msg
-      let videoMessage = ''
-      let content = key.split(":")[1]||arg?.content
-
-      content = (["html","default","image","text","video","proto"]).find(i=>i===content)?content:(ctx.puppeteer&&config.toHTML)?"html":"default"
-      let description,html
-      description = item.description?.join?item.description.join(""):item.description
-      if(key.split(":")[0] == 'custom'){
-        description = arg.custom.replace("&nbsp;"," ")
-        .replace(/{{(.+?)}}/g,i=>(/[a-zA-Z\.]+/.exec(i)[0].split(".")
+    let messageKey = key.split(":")
+    let itemKey = messageKey[0]
+    let content:string = messageKey[1]||arg?.content
+    content = (["html","default","image","text","video","proto"]).find(i=>i===content)?content:(ctx.puppeteer&&config.toHTML)?"html":"default"
+    let isMerge:boolean = messageKey[2]=="merge"
+    let msg:string = ""
+    if(itemKey == 'description'||itemKey=='custom'){
+      debug(itemKey);
+      let messageArray:Array<string> = []
+      let description:string = item.description?.join?item.description.join(""):item.description
+      let html
+      if(itemKey == 'custom'){
+        description = arg.custom.replace(/{{(.+?)}}/g,i=>(/[a-zA-Z\.]+/.exec(i)[0].split(".")
           .reduce((t,v,i,a)=>i==0?(a[0]=='rss'?sourceRssJson[v]:(v=='item.description'?description:item[v])):t[v],"")
         ))
         html = cheerio.load(description)
       }else{
         html = cheerio.load(config?.domFrame?.replace("{{description}}",description)||description)
       }
-      // console.log(description);
-      
       debug(html.xml())
-      debug("cheerio.load");
       if(arg.videoRepost&&(["html","default","video"]).find(i=>i===content)){
         debug("videoRepost");
-        videoMessage = [...html('video').map((v,i)=>i.attribs.src)].map(i=>`<message><author id="${authorId}"/><video src="${i}"/></message>`).join("")
+        messageArray.push(...[...html('video').map((v,i)=>i.attribs.src)].map(i=>`<video src="${i}"/>`))
       }
-      // console.log(arg);
-      if(content==='html'){
-          //puppeteer
-            debug("puppeteer");
-          if(arg.proxyAgent.enabled){
-            debug("puppeteer:proxyAgent");
-            await Promise.all(html('img').map(async(v,i)=>i.attribs.src = `data:image/jpeg;base64, ${Buffer.from(await $http(i.attribs.src,arg,{responseType: 'arraybuffer'}), 'binary').toString('base64')}` )) 
-            html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
-          }
-          msg =  `<message><author id="${authorId}"/>${await ctx.puppeteer.render(html.xml())}</message>${videoMessage}`
-      }else if(content=='default'){
-        let text = `<message><author id="${authorId}"/>${html.text()}</message>`
-        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
-        let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
-        msg = text+imgMessage
-      }else if(content=='text'){
-        msg =  `<message><author id="${authorId}"/>${html.text()}</message>`
-      }else if(content=='image'){
-        let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
-        let imgMessage = imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`).join("")
-        msg =  imgMessage
-      }else if(content=='proto'){
-        msg =  `<message><author id="${authorId}"/>${description}${videoMessage}</message>`
+      if(content==='html'||(content==='custom'&&arg.toHTML)){
+        debug("content:html");
+        debug("puppeteer");
+        if(arg.proxyAgent.enabled){
+          debug("puppeteer:proxyAgent");
+          await Promise.all(html('img').map(async(v,i)=>i.attribs.src = `data:image/jpeg;base64, ${Buffer.from(await $http(i.attribs.src,arg,{responseType: 'arraybuffer'}), 'binary').toString('base64')}` )) 
+        }
+        html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
+        // debug(html.xml());
+        messageArray.push(await ctx.puppeteer.render(html.xml()))
       }else{
-        msg = `<message>无效的content参数:${content}</message>`
+        if(content=='default' || content=='text' || content==='custom'){
+          debug("content:text");
+          messageArray.push(html.text())
+        }
+        if(content=='default' || content=='image' || content==='custom'){
+          debug("content:image");
+          let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
+          messageArray.push(...imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`))
+        }
+        if(content=='proto'){
+          debug("content:proto");
+          messageArray.push(description)
+        }
       }
-      return key?.split(":")?.[2]=='merge'?`<message forward><author id="${authorId}"/>${msg}</message>`:msg
+      msg = messageArray.map(i=>`<message><author id="${authorId}"/>${i}</message>`).flat(Infinity).join("")
+    }else{
+      msg = `<message><author id="${authorId}"/>${messageItem[key]}</message>`
     }
-    return `<message><author id="${authorId}"/>${messageItem[key]}</message>`
+    return isMerge?`<message forward>${msg}</message>`:msg
+    // return `<message><author id="${authorId}"/>${msg}</message>`
   }))
   let msg = arg.merge?`<message forward><author id="${authorId}"/>${message.join('')}</message>`:message
+  debug(`parseRssItem:end (${sourceRssJson.rss.channel.title})`);
   if(config.censor){
     return `<censor>${msg}</censor>`
   }
@@ -377,6 +378,9 @@ const formatArg = (arg:string,rssItem:string,content:string)=>{
       let auth = {username,password}
       json.proxyAgent.auth = auth
     }
+  }
+  if(json.custom){
+    json.custom = json.custom.replace("&nbsp;"," ")
   }
   return json
 }
