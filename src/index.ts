@@ -436,7 +436,8 @@ const mixinArg = (arg)=>({
     // .option('updata', '立刻进行一次更新，但不会影响自定义refresh的下次更新时间')
     .option('daily', '-d <content>指定该订阅每天更新时间,效果同refresh:1440,例:-d 8:00')
     .option('test', '-T 按照规则返回最新更新，但不会订阅')
-    .example('rssowl https://feeds.feedburner.com/ruanyifeng')
+    .example('rssowl https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361')
+    .example('https://github.com/borraken/koishi-plugin-rss-owl')
     .action(async ({ session, options }, url) => {
       debug("init")
       debug(options)
