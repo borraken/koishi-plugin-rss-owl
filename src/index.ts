@@ -193,6 +193,10 @@ export function apply(ctx: Context, config: Config) {
         let itemArray = rssJsonArray.map(i=>i.rss.channel.item).flat(1)
           .sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
           .filter(item=>!arg.keywordFilter.find(keyword=>new RegExp(keyword,'im').test(item.title)||new RegExp(keyword,'im').test(item.description)))
+          
+        if(arg.reverse){
+          itemArray = itemArray.reverse()
+        }
         debug(rssItem.lastPubDate);
         debug("itemArray");
         debug(itemArray[0]);
@@ -202,9 +206,6 @@ export function apply(ctx: Context, config: Config) {
         if(rssItem.arg.forceLength){
           debug("forceLength");
           let messageList = await Promise.all(itemArray.filter((v,i)=>i<arg.forceLength).map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
-          if(arg.reverse){
-            messageList = messageList.reverse()
-          }
           let message = arg.merge?`<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
