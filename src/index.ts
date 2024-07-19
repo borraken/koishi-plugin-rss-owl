@@ -266,7 +266,11 @@ const getImageUrl = async(url,arg)=>{
 const cacheDir = __dirname+'/cache'
 const puppeteerToFile = async(puppeteer:string)=>{
   let base64 = /(?<=src=").+?(?=")/.exec(puppeteer)[0]
-  return `<img src="${await writeCacheFile(base64)}"/>`
+  const buffer = Buffer.from(base64.substring(base64.indexOf(',') + 1),'base64');
+  // console.log("Byte length: " + buffer.length);
+  const MB = buffer.length / 1e+6
+  debug("MB: " + MB);
+  return `<${MB<5?'img':'file'} src="${await writeCacheFile(base64)}"/>`
 }
 const writeCacheFile = async(fileUrl:string)=>{
   if (!fs.existsSync(cacheDir)) {
@@ -280,7 +284,7 @@ const writeCacheFile = async(fileUrl:string)=>{
   }
   let base64Data = fileUrl.replace(/^data:.+?;base64,/, "");
   let path = `${cacheDir}/${fileName}`
-  console.log(path);
+  debug(path);
   
   fs.writeFileSync(path,base64Data,'base64')
   return pathToFileURL(path).href
