@@ -3,11 +3,13 @@ import axios from 'axios'
 import * as cheerio from 'cheerio';
 import { } from 'koishi-plugin-puppeteer'
 import { } from '@koishijs/censor'
+// import { } from '@koishijs/assets'
 const X2JS = require("x2js")
 const x2js = new X2JS()
 const logger = new Logger('rss-owl')
 export const name = 'RSS-OWL'
-// export const using = ['database'] as const
+import { pathToFileURL } from 'url'
+import * as fs from 'fs';
 export const inject = {required:["database"] ,optional: ["puppeteer","censor"]}
 
 declare module 'koishi' {
@@ -251,6 +253,48 @@ export function apply(ctx: Context, config: Config) {
         throw new Error("未找到目标群组/频道。");
     }
 }
+// const __dirname = './cache'
+const getImageUrl = async(url,arg)=>{
+  let res = await $http(url,arg,{responseType: 'arraybuffer'})
+  let prefix = `data:${res.headers["content-type"]};base64,`
+  let img = Buffer.from(res.data, 'binary').toString('base64')
+  let fileUrl = await writeCacheFile(`${prefix}${img}`)
+  return fileUrl
+  // let res = await $http(url,arg,{responseType: 'blob'})
+  // let file = new File([res.data], "name");
+}
+const cacheDir = __dirname+'/cache'
+const puppeteerToFile = async(puppeteer:string)=>{
+  let base64 = /(?<=src=").+?(?=")/.exec(puppeteer)[0]
+  return `<img src="${await writeCacheFile(base64)}"/>`
+}
+const writeCacheFile = async(fileUrl:string)=>{
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir);
+  }
+  let fileList = fs.readdirSync(cacheDir)
+  let suffix = /(?<=^data:.+?\/).+?(?=;base64)/.exec(fileUrl)[0]
+  let fileName = `${parseInt((Math.random()*10000000).toString()).toString()}.${suffix}`
+  while(fileList.find(i=>i==fileName)){
+    fileName = `${parseInt((Math.random()*10000000).toString()).toString()}.${suffix}`
+  }
+  let base64Data = fileUrl.replace(/^data:.+?;base64,/, "");
+  let path = `${cacheDir}/${fileName}`
+  console.log(path);
+  
+  fs.writeFileSync(path,base64Data,'base64')
+  return pathToFileURL(path).href
+}
+const delCache = async()=>{
+  if (fs.existsSync(cacheDir)) {
+    fs.rmdirSync(cacheDir,{recursive:true})
+  }
+  return
+}
+const imageUrlToFile = async(url)=>{
+  // fs.
+  // pathToFileURL()
+}
 const $http = async (url,arg,config={})=>{
   let requestConfig = {timeout:arg.timeout*1000}
   // console.log(arg);
@@ -276,14 +320,14 @@ const $http = async (url,arg,config={})=>{
   let res = await axios.get(url,{...requestConfig,...config})
   // console.log(res);
   
-  return res.data
+  return res
 }
 const getRssData = async(url,config)=>{
   // let rssXML = await fetch(url)
   // let rssText = await rssXML.text()
   // let rssJson = x2js.xml2js(rssText)
   // console.log(rssXML);
-  let res = await $http(url,config)
+  let res = (await $http(url,config)).data
   let rssJson = x2js.xml2js(res)
   return rssJson
 }
@@ -320,11 +364,11 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
         debug("puppeteer");
         if(arg.proxyAgent.enabled){
           debug("puppeteer:proxyAgent");
-          await Promise.all(html('img').map(async(v,i)=>i.attribs.src = `data:image/jpeg;base64, ${Buffer.from(await $http(i.attribs.src,arg,{responseType: 'arraybuffer'}), 'binary').toString('base64')}` )) 
+          await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg) )) 
         }
         html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
         // debug(html.xml());
-        messageArray.push(await ctx.puppeteer.render(html.xml()))
+        messageArray.push(await puppeteerToFile(await ctx.puppeteer.render(html.xml())))
       }else{
         if(content=='default' || content=='text' || content==='custom'){
           debug("content:text");
@@ -332,8 +376,8 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
         }
         if(content=='default' || content=='image' || content==='custom'){
           debug("content:image");
-          let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await $http(i,arg,{responseType: 'arraybuffer'})))
-          messageArray.push(...imgBuffer.map(buffer=>`<message><author id="${authorId}"/>${h.image(buffer, 'image/png')}</message>`))
+          let imgBuffer = await Promise.all([...html('img').map((v,i)=>i.attribs.src)].map(async i=>await getImageUrl(i.attribs.src,arg)))
+          messageArray.push(...imgBuffer.map(buffer=>`<message><author id="${authorId}"/><img src="${buffer}"/></message>`))
         }
         if(content=='proto'){
           debug("content:proto");
@@ -415,13 +459,16 @@ const mixinArg = (arg)=>({
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
     // await sendMessageToChannel(ctx,{platform:"sandbox:rdbvu1xb9nn",guildId:"#"},"123")
-  feeder()
+    delCache()
+    feeder()
     interval = setInterval(async()=>{
       feeder()
+      delCache()
     },config.refresh*1000)
   })
   ctx.on('dispose', async () => {
     clearInterval(interval)
+    delCache()
   })
   ctx.guild()
     .command('rssowl <url:text>', '订阅 RSS 链接或链接组,订阅链接组时用|隔开')
