@@ -39,6 +39,10 @@ arg 可以写入局部参数，这会在获取该订阅时覆盖掉插件配置
 
 videoRepost和toHTML在此仅可关闭，你只能在插件配置中打开
 
+有forceLength的情况下每次获取订阅都会发送最新的几条消息
+
+参数reverse会在订阅有多条更新时反向发送更新
+
 ```
 // 关闭代理，并使用custom
 rsso -a proxyAgent:false,rssItem:custom <url>
@@ -47,6 +51,7 @@ rsso -a proxyAgent:false,rssItem:custom <url>
 rsso -a proxyAgent:http//127.0.0.1/7890,auth:username/password <url>
 
 //forceLength和refresh的组合可以让你订阅一些不提供更新时间的订阅，如排行榜
+//发送最新10条消息，每日更新1次
 rsso -a forceLength:10,refresh:1440 <url>
 
 //custom和domFrame都可以修改该订阅的外观，使用`&nbsp;`代替空格以避免koishi解析错误

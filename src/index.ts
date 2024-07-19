@@ -202,6 +202,9 @@ export function apply(ctx: Context, config: Config) {
         if(rssItem.arg.forceLength){
           debug("forceLength");
           let messageList = await Promise.all(itemArray.filter((v,i)=>i<arg.forceLength).map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
+          if(arg.reverse){
+            messageList = messageList.reverse()
+          }
           let message = arg.merge?`<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
           // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
           sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
@@ -422,22 +425,21 @@ const mixinArg = (arg)=>({
   ctx.guild()
     .command('rssowl <url:text>', '订阅 RSS 链接或链接组,订阅链接组时用|隔开')
     .alias('rsso')
-    .usage('注意：参数请写在最前面，不然会被当成 url 的一部分，嵌套合并消息可能会出问题，请尽量避免')
+    .usage('https://github.com/borraken/koishi-plugin-rss-owl')
     .option('list', '-l 查看订阅列表')
     .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
     .option('removeAll', '全部删除订阅')
     .option('arg', '-a <content>自定义配置(https://github.com/borraken/koishi-plugin-rss-owl),额外参数[forceLength,reverse]')
     .option('rssItem', '-i <content>自定义提取,例:-i title,description:text:merge,custom')
-    .option('keywordFilter', '-k <content>自定义过滤规则')
-    .option('content', '-c <content>[default|html|text|image|video|proto] description内容提取')
+    .option('keywordFilter', '-k <content> 添加过滤规则')
+    .option('content', '-c <content> 内容提取')
     .option('title', '-t <content>自定义命名')
-    .option('force', '强行写入,不通过链接可用性验证')
+    .option('force', '强行写入')
     // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
     // .option('updata', '立刻进行一次更新，但不会影响自定义refresh的下次更新时间')
-    .option('daily', '-d <content>指定该订阅每天更新时间,效果同refresh:1440,例:-d 8:00')
-    .option('test', '-T 按照规则返回最新更新，但不会订阅')
+    .option('daily', '-d <content>')
+    .option('test', '-T 测试')
     .example('rssowl https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361')
-    .example('https://github.com/borraken/koishi-plugin-rss-owl')
     .action(async ({ session, options }, url) => {
       debug("init")
       debug(options)
