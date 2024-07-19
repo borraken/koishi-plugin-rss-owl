@@ -350,7 +350,7 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
   }
   return msg
 }
-const formatArg = (arg:string,rssItem:string,content:string)=>{
+const formatArg = (arg:string,rssItem:string='',content:string='',daily:string='')=>{
   let json = Object.assign({},...(arg?.split(',')?.map(i=>({[i.split(":")[0]]:i.split(":")[1]}))||[]))
   let booleanKey = ['firstLoad','merge',"videoRepost","toHTML"]
   json = Object.assign({},...Object.keys(json).map(key=>({[key]:(booleanKey.indexOf(key)+1)?(json[key]!='false'):json[key]})))
@@ -359,6 +359,13 @@ const formatArg = (arg:string,rssItem:string,content:string)=>{
   }
   if(content){
     json['content'] = content
+  }
+  if(daily){
+    json['refresh'] = 1440
+    let forceLength = daily.split("/")?.[1]
+    if(forceLength){
+      json.forceLength = parseInt(forceLength)
+    }
   }
   if(json.refresh){
     json.refresh = json.refresh?(parseInt(json.refresh)*1000):0
@@ -375,9 +382,9 @@ const formatArg = (arg:string,rssItem:string,content:string)=>{
       debug("enabled:false");
       json.proxyAgent = {enabled:false}
     }else{
-      let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=:\/\/)/)
-      let host = json.proxyAgent.match(/(?<=:\/\/)(.*)(?=:)/)
-      let port = +json.proxyAgent.match(/(?<=:)(\d{1,5})$/)
+      let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=\/\/)/)
+      let host = json.proxyAgent.match(/(?<=:\/\/)(.+?)(?=\/)/)
+      let port = +json.proxyAgent.match(/(?<=\/)(\d{1,5})$/)
       let proxyAgent = {enabled:true,protocol,host,port}
       json.proxyAgent = proxyAgent
       if(json.auth){
@@ -451,7 +458,7 @@ const mixinArg = (arg)=>({
       debug(rssList)
       let rssJson
       let itemArray,item
-      let optionArg = formatArg(options.arg,options.rssItem,options.content)
+      let optionArg = formatArg(options.arg,options.rssItem,options.content,options.daily)
       let arg = mixinArg(optionArg)
       let urlList = url?.split('|')
       if (options.test) {
@@ -505,8 +512,18 @@ const mixinArg = (arg)=>({
       if (!url) {
         return '未输入url'
       }
-      
       debug("subscribe active")
+      let getLastPubDate = ()=>{
+        if(options.daily){
+          let time = options.daily.split("/")[0].split(":")
+          let date = new Date()
+          date.setHours(time[0])
+          time[1]&&date.setMinutes(time[1])
+          return +date
+        }else{
+          return +new Date()
+        }
+      }
       const subscribe = {
         url,
         platform,
@@ -515,7 +532,7 @@ const mixinArg = (arg)=>({
         rssId:(+rssList.slice(-1)?.[0]?.rssId||0)+1,
         arg:optionArg,
         title:options.title||(urlList.length>1&&`订阅组:${new Date().toLocaleString()}`)||"",
-        lastPubDate:+new Date()
+        lastPubDate:getLastPubDate()
       }
       debug(subscribe);
       if(options.force){
