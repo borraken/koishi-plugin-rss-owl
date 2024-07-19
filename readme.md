@@ -15,6 +15,7 @@ rsso 需要订阅的链接或链接组
 rsso https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361
 //豆瓣小组-可爱事物分享
 rsso https://rsshub.rssforever.com/douban/group/648102
+
 //(以下链接可能需要配置proxy才能显示完整内容)
 //telegram每日沙雕墙
 rsso https://rsshub.rssforever.com/telegram/channel/woshadiao
@@ -32,7 +33,7 @@ rsso <url1>|<url2>|<url3>...
 
 ### 2. 参数说明
 
-##### arg
+#### arg
 arg 可以写入局部参数，这会在获取该订阅时覆盖掉插件配置
 
 参数内部不能使用`,`和`:`，否则会造成解析错误
@@ -58,19 +59,19 @@ rsso -a forceLength:10,refresh:1440 <url>
 rsso -a custom:<div&nbsp;style='width:600px'>{{description}}</div> <url>
 ```
 
-##### rssItem
+#### rssItem
 与arg不同的是，在此你可以使用`:`来定义解析规则，第一位必须是rss的key或者custom，第二位是可选的content，第三位是可选的merge来使用合并消
 ```
 rsso -i custom,description:text:merge <url>
 ```
 
-##### keyword-filter
+#### keyword-filter
 关键字过滤，会与配置中的进行合并
 ```
 rsso -k nsfw,something <url>
 ```
 
-##### content
+#### content
 [default|html|text|image|video|proto]
 
 提取规则,default会优先使用html,关闭html时会将文字和图片分开发送,text|image|video仅会发送相关的内容,proto会将rss推送不做任何处理发送
@@ -78,23 +79,23 @@ rsso -k nsfw,something <url>
 rsso -c html <url>
 ```
 
-##### title
+#### title
 自定义名称，一般配合链接组进行使用
 ```
 rsso -t 订阅名称 <url>
 ```
 
-##### force
+#### force
 强行写入而不仅过验证，因此，订阅时最后一次更新不会被推送
 
-##### test
+#### test
 测试链接，不会写入订阅
 
 ```
 rsso -T <url>
 ```
 
-##### daily
+#### daily
 指定该订阅每天更新时间和更新条数
 
 ```
