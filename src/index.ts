@@ -47,6 +47,7 @@ export interface Config {
   custom?: string
   customUrlEnable?: boolean
   quickUrl?: Object
+  imageMode?: string
   debug?: boolean
 }
 export interface proxyAgent {
@@ -152,6 +153,7 @@ export const Config: Schema<Config> = Schema.object({
       ])
     }),Schema.object({}),]),
   ]),
+  imageMode:Schema.union(['base64', 'localFile']).default('base64'),
   debug:Schema.boolean().description('调试开关').default(false),
 })
 export function apply(ctx: Context, config: Config) {
@@ -257,9 +259,13 @@ export function apply(ctx: Context, config: Config) {
 const getImageUrl = async(url,arg)=>{
   let res = await $http(url,arg,{responseType: 'arraybuffer'})
   let prefix = `data:${res.headers["content-type"]};base64,`
-  let img = Buffer.from(res.data, 'binary').toString('base64')
-  let fileUrl = await writeCacheFile(`${prefix}${img}`)
-  return fileUrl
+  if(config.imageMode=='base64'){
+    return h.image(Buffer.from(res.data, 'binary'),res.headers["content-type"])
+  }else if(config.imageMode=='localFile'){
+    let img = Buffer.from(res.data, 'binary').toString('base64')
+    let fileUrl = await writeCacheFile(`${prefix}${img}`)
+    return fileUrl
+  }
   // let res = await $http(url,arg,{responseType: 'blob'})
   // let file = new File([res.data], "name");
 }
