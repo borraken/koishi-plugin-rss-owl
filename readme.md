@@ -33,6 +33,14 @@ rsso <url1>|<url2>|<url3>...
 
 ### 2. 参数说明
 
+#### rssItem
+提取item中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt)
+可以使用`:`来定义解析规则，第一位必须是rss的key或者custom，第二位是可选的content，第三位是可选的merge来对该key中的消息合并
+content仅对description生效
+```
+rsso -i custom,description:image:merge <url>
+```
+
 #### arg
 arg 可以写入局部参数，这会在获取该订阅时覆盖掉插件配置
 
@@ -55,14 +63,12 @@ rsso -a proxyAgent:http//127.0.0.1/7890,auth:username/password <url>
 //发送最新10条消息，每日更新1次
 rsso -a forceLength:10,refresh:1440 <url>
 
-//custom和domFrame都可以修改该订阅的外观，使用`&nbsp;`代替空格以避免koishi解析错误
-rsso -a custom:<div&nbsp;style='width:600px'>{{description}}</div> <url>
-```
+//custom和domFrame都可以对订阅自定义
+//domFrame仅对description生效，不允许写入title等key
+rsso -a domFrame:{{description}} <url>
 
-#### rssItem
-与arg不同的是，在此你可以使用`:`来定义解析规则，第一位必须是rss的key或者custom，第二位是可选的content，第三位是可选的merge来使用合并消
-```
-rsso -i custom,description:text:merge <url>
+//custom对custom生效，使用`&nbsp;`代替空格以避免koishi解析错误
+rsso -i custom -C <div&nbsp;style='width:600px'>{{description}}</div> <url>
 ```
 
 #### keyword-filter
@@ -107,6 +113,12 @@ rsso -d 8:00 <url>
 rsso -a reverse:true -d 8:00/10 <url>
 
 ```
+
+##### todu
+- [ ] 稳定使用
+- [ ] 快速订阅功能
+- [ ] 视频本地转发功能
+- [ ] 对返回磁链的订阅自动下载压缩发送
 
 ## 致谢:
 

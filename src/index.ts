@@ -111,7 +111,7 @@ export const Config: Schema<Config> = Schema.object({
   videoRepost: Schema.boolean().description('允许发送视频，关闭时建议在关键字过滤中添加 `<video.+>` 以忽略相关推送').default(false),
   videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
   keywordFilter: Schema.array(Schema.string()).description('关键字过滤，item中title和description中含有关键字时不会推送，不区分大小写').default(['nsfw']).experimental(),
-  rssItem: Schema.dict(Boolean).description('提取item中的key和channel中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 。关闭key右边的开关会使 rss-owl 忽略这个key').default({"channel.title":false,"title":false,"author":false,"pubDate":false,"link":false,"description":true,"custom":false}),
+  rssItem: Schema.dict(Boolean).description('提取item中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt) 。关闭key右边的开关会使 rss-owl 忽略这个key').default({"title":false,"author":false,"pubDate":false,"link":false,"description":true,"custom":false}),
   custom:Schema.string().role('textarea').default(`<body style="width:400px;padding:20px;background:#F5ECCD;">
     <div style="display: flex;flex-direction: column;">
         <div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);display: flex;align-items: center;flex-direction: column;border-radius: 10px;border: solid;overflow:hidden">
@@ -124,7 +124,7 @@ export const Config: Schema<Config> = Schema.object({
         <div style="font-weight: bold;">{{title}}:{{pubDate}}</div>
         <div style="">{{description}}</div>
     </div>
-</body>`).description('rssItem中custom的内容，根据当前配置使用puppeteer，使用插值调用rssItem中所有内容，订阅时使用`&nbsp;`代替空格'),
+</body>`).description('rssItem中custom的内容，根据配置使用puppeteer，订阅时配置需使用`&nbsp;`代替空格'),
   customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
   quickUrl:Schema.intersect([
     Schema.object({enabled: Schema.boolean().default(false).description('开发中：允许使用快速订阅').experimental(),}),
@@ -211,8 +211,8 @@ export function apply(ctx: Context, config: Config) {
           debug("forceLength");
           let messageList = await Promise.all(itemArray.filter((v,i)=>i<arg.forceLength).map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
           let message = arg.merge?`<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`:messageList.join("")
-          // ctx.broadcast([`${item.platform}:${item.guildId}`],message)
-          sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
+          ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`],message)
+          // sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},message)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(itemArray?.[0]?.pubDate||0)})
         }
         if(!rssItemArray.length)continue
@@ -220,13 +220,15 @@ export function apply(ctx: Context, config: Config) {
           debug("mergeItem");
           let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},rssItem.author,Object.assign({},...rssJsonArray))))
           // debug(messageList.map(i=>i.slice(0,100)))
-          sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward><author id="${rssItem.author}"/>${messageList.join('')}</message>`)
+          ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`],`<message forward><author id="${rssItem.author}"/>${messageList.join('')}</message>`)
+          // sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},`<message forward><author id="${rssItem.author}"/>${messageList.join('')}</message>`)
           await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(rssItemArray[0].pubDate)})
         }else{
           debug("default");
           rssItemArray.reverse().forEach(async i => {
+            ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`],await parseRssItem(i,arg,rssItem.author,Object.assign({},...rssJsonArray)))
             // ctx.broadcast([`${item.platform}:${item.guildId}`], await parseRssItem(item,arg,item.author))
-            sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author,Object.assign({},...rssJsonArray)))
+            // sendMessageToChannel(ctx,{platform:rssItem.platform,guildId:rssItem.guildId},await parseRssItem(i,arg,rssItem.author,Object.assign({},...rssJsonArray)))
             await ctx.database.set(('rssOwl' as any ),{id:rssItem.id},{lastPubDate:+new Date(i.pubDate)})
           }); 
         }
@@ -305,6 +307,11 @@ const imageUrlToFile = async(url)=>{
   // fs.
   // pathToFileURL()
 }
+// let 
+const sleep = (delay=1000)=>new Promise(resolve => setTimeout(resolve, delay));
+// const wait = async (delay)=>setTimeout(() => {
+//   return true
+// }, delay);
 const $http = async (url,arg,config={})=>{
   let requestConfig = {timeout:arg.timeout*1000}
   // console.log(arg);
@@ -327,9 +334,16 @@ const $http = async (url,arg,config={})=>{
   }
   // debug(requestConfig);
   debug(`${url} : ${JSON.stringify({...requestConfig,...config})}`)
-  let res = await axios.get(url,{...requestConfig,...config})
-  // console.log(res);
-  
+  let res
+  let retries = 3
+  while (retries > 0 && !res) {
+    try {
+      res = await axios.get(url,{...requestConfig,...config})
+    } catch (error) {
+      retries --
+      await sleep(1000)
+    }
+  }
   return res
 }
 const getRssData = async(url,config)=>{
@@ -347,14 +361,14 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
   let message = await Promise.all(Object.keys(messageItem).map(async key=>{
     let messageKey = key.split(":")
     let itemKey = messageKey[0]
-    let content:string = messageKey[1]||arg?.content
+    let content:string = messageKey[1]||arg.content
     content = (["html","default","image","text","video","proto"]).find(i=>i===content)?content:(ctx.puppeteer&&config.toHTML)?"html":"default"
-    let isMerge:boolean = messageKey[2]=="merge"
+    let isMerge:boolean = messageKey[2]=="merge" ?? arg.merge
     let msg:string = ""
     if(itemKey == 'description'||itemKey=='custom'){
       debug(itemKey);
       let messageArray:Array<string> = []
-      let description:string = item.description?.join?item.description.join(""):item.description
+      let description:string = item.description?.join?.('')||item.description
       let html
       if(itemKey == 'custom'){
         description = arg.custom.replace(/{{(.+?)}}/g,i=>(/[a-zA-Z\.]+/.exec(i)[0].split(".")
@@ -364,7 +378,9 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
       }else{
         html = cheerio.load(config?.domFrame?.replace("{{description}}",description)||description)
       }
+      debug("html.xml()")
       debug(html.xml())
+      debug(html.text())
       if(arg.videoRepost&&(["html","default","video"]).find(i=>i===content)){
         debug("videoRepost");
         messageArray.push(...[...html('video').map((v,i)=>i.attribs.src)].map(i=>`<video src="${i}"/>`))
@@ -378,11 +394,14 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
         }
         html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
         // debug(html.xml());
-        messageArray.push(await puppeteerToFile(await ctx.puppeteer.render(html.xml())))
+        let msg =  await ctx.puppeteer.render(html.xml())
+        msg = config.imageMode=='base64'?msg:(await puppeteerToFile(msg))
+        messageArray.push(msg)
       }else{
         if(content=='default' || content=='text' || content==='custom'){
           debug("content:text");
           messageArray.push(html.text())
+          // messageArray.push(`<text>${html.text()}</text>`)
         }
         if(content=='default' || content=='image' || content==='custom'){
           debug("content:image");
@@ -408,7 +427,8 @@ const parseRssItem = async(item:any,arg:rssArg,authorId:string|number,sourceRssJ
   }
   return msg
 }
-const formatArg = (arg:string,rssItem:string='',content:string='',daily:string='')=>{
+const formatArg = (options)=>{
+  let {arg,rssItem,content,daily,custom} = options
   let json = Object.assign({},...(arg?.split(',')?.map(i=>({[i.split(":")[0]]:i.split(":")[1]}))||[]))
   let booleanKey = ['firstLoad','merge',"videoRepost","toHTML"]
   json = Object.assign({},...Object.keys(json).map(key=>({[key]:(booleanKey.indexOf(key)+1)?(json[key]!='false'):json[key]})))
@@ -453,8 +473,8 @@ const formatArg = (arg:string,rssItem:string='',content:string='',daily:string='
       }
     }
   }
-  if(json.custom){
-    json.custom = json.custom.replace("&nbsp;"," ")
+  if(custom){
+    json.custom = custom.replace("&nbsp;"," ")
   }
   return json
 }
@@ -495,6 +515,7 @@ const mixinArg = (arg)=>({
     .option('force', '强行写入')
     // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
     // .option('updata', '立刻进行一次更新，但不会影响自定义refresh的下次更新时间')
+    .option('custom', '-C <content>')
     .option('daily', '-d <content>')
     .option('test', '-T 测试')
     .example('rssowl https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361')
@@ -519,7 +540,7 @@ const mixinArg = (arg)=>({
       debug(rssList)
       let rssJson
       let itemArray,item
-      let optionArg = formatArg(options.arg,options.rssItem,options.content,options.daily)
+      let optionArg = formatArg(options)
       let arg = mixinArg(optionArg)
       let urlList = url?.split('|')
       if (options.test) {
@@ -536,10 +557,10 @@ const mixinArg = (arg)=>({
         let rssItemArray = itemArray.filter((v,i)=>arg.forceLength?(i<arg.forceLength):(i<1)).filter((v,i)=>arg.maxRssItem?(i<arg.maxRssItem):true)
         debug("rssItemArray");
         debug(rssItemArray);
-        let messageList = await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},author,Object.assign({},...rssJsonArray))))
+        let messageList = (await Promise.all(rssItemArray.reverse().map(async i=>await parseRssItem(i,{...arg,merge:false},author,Object.assign({},...rssJsonArray))))).flat(Infinity)
         debug("mergeItem");
         debug(messageList)
-        return `<message forward><author id="${author}"/>${messageList.flat(Infinity).join('')}</message>`
+        return `<message forward>${messageList.join('')}</message>`
       }
       if (options.remove) {
         debug(`remove:${options.remove}`)
