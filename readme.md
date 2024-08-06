@@ -42,9 +42,9 @@ rsso -i custom,description:image:merge <url>
 ```
 
 #### arg
-arg 可以写入局部参数，这会在获取该订阅时覆盖掉插件配置
+arg 可以写入局部参数，这会在使用该订阅时覆盖掉插件配置而不会影响其他订阅
 
-参数内部不能使用`,`和`:`，否则会造成解析错误
+插件配置中大部分选项都可以在此修改
 
 videoRepost和toHTML在此仅可关闭，你只能在插件配置中打开
 
@@ -80,7 +80,7 @@ rsso -k nsfw,something <url>
 #### content
 [default|html|text|image|video|proto]
 
-提取规则,default会优先使用html,关闭html时会将文字和图片分开发送,text|image|video仅会发送相关的内容,proto会将rss推送不做任何处理发送
+提取规则,default会优先使用html,关闭html时会将文字和图片分开发送,text|image|video仅会发送相关的内容,proto将不做任何处理直接发送
 ```
 rsso -c html <url>
 ```

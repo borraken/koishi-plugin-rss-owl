@@ -153,7 +153,7 @@ export const Config: Schema<Config> = Schema.object({
       ])
     }),Schema.object({}),]),
   ]),
-  imageMode:Schema.union(['base64', 'localFile']).default('base64'),
+  imageMode:Schema.union(['base64', 'localFile']).description('图片发送模式，使用localFile可能可以解决图片过大时无法发送的问题').default('base64'),
   debug:Schema.boolean().description('调试开关').default(false),
 })
 export function apply(ctx: Context, config: Config) {
@@ -194,7 +194,7 @@ export function apply(ctx: Context, config: Config) {
       try {
         let rssJsonArray = (await Promise.all(rssItem.url.split("|")
         .map(async url => await getRssData(url,arg))))
-        let itemArray = rssJsonArray.map(i=>i.rss.channel.item).flat(1)
+        let itemArray = rssJsonArray.map(i=>i?.rss?.channel?.item||[]).flat(1)
           .sort((a,b)=>+new Date(b.pubDate)-+new Date(a.pubDate))
           .filter(item=>!arg.keywordFilter.find(keyword=>new RegExp(keyword,'im').test(item.title)||new RegExp(keyword,'im').test(item.description)))
           
@@ -239,33 +239,41 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  async function sendMessageToChannel(ctx, guild, broadMessage) {
-    const targetChannels = await ctx.database.get("channel", guild);
-    debug("sendMessageToChannel")
-    debug(guild)
-    debug(targetChannels)
-    if (targetChannels.length === 1) {
-        const bot = ctx.bots.find((bot) => bot.userId === targetChannels[0].assignee);
-        if (bot) {
-            await bot.sendMessage(guild.guildId, broadMessage);
-        } else {
-            throw new Error("指定的bot未找到。");
-        }
-    } else if (targetChannels.length > 1) {
-        throw new Error("有复数个bot存在于该群组/频道，请移除多余bot。");
-    } else {
-        throw new Error("未找到目标群组/频道。");
-    }
-}
+//   async function sendMessageToChannel(ctx, guild, broadMessage) {
+//     const targetChannels = await ctx.database.get("channel", guild);
+//     debug("sendMessageToChannel")
+//     debug(guild)
+//     debug(targetChannels)
+//     if (targetChannels.length === 1) {
+//         const bot = ctx.bots.find((bot) => bot.userId === targetChannels[0].assignee);
+//         if (bot) {
+//             await bot.sendMessage(guild.guildId, broadMessage);
+//         } else {
+//             throw new Error("指定的bot未找到。");
+//         }
+//     } else if (targetChannels.length > 1) {
+//         throw new Error("有复数个bot存在于该群组/频道，请移除多余bot。");
+//     } else {
+//         throw new Error("未找到目标群组/频道。");
+//     }
+// }
 // const __dirname = './cache'
 const getImageUrl = async(url,arg)=>{
-  let res = await $http(url,arg,{responseType: 'arraybuffer'})
-  let prefix = `data:${res.headers["content-type"]};base64,`
+  let res
+  try {
+    res = await $http(url,arg,{responseType: 'arraybuffer'})
+  } catch (error) {
+    return ''
+  }
+  let prefixList = ['png','jpeg','webp']
+  let prefix = res.headers["content-type"]||('image/' + (prefixList.find(i=>new RegExp(i).test(url))||'jpeg'))
+  let base64Prefix = `data:${prefix};base64,`
+  let base64Img = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
   if(config.imageMode=='base64'){
-    return h.image(Buffer.from(res.data, 'binary'),res.headers["content-type"])
+    // console.log(base64Img);
+    return base64Img
   }else if(config.imageMode=='localFile'){
-    let img = Buffer.from(res.data, 'binary').toString('base64')
-    let fileUrl = await writeCacheFile(`${prefix}${img}`)
+    let fileUrl = await writeCacheFile(base64Img)
     return fileUrl
   }
   // let res = await $http(url,arg,{responseType: 'blob'})
@@ -303,27 +311,26 @@ const delCache = async()=>{
   }
   return
 }
-const imageUrlToFile = async(url)=>{
-  // fs.
-  // pathToFileURL()
-}
-// let 
 const sleep = (delay=1000)=>new Promise(resolve => setTimeout(resolve, delay));
-// const wait = async (delay)=>setTimeout(() => {
-//   return true
-// }, delay);
+let maxRequestLimit = 1
+let requestRunning = 0
 const $http = async (url,arg,config={})=>{
+  while (requestRunning >= maxRequestLimit) {
+    await sleep(1000)
+  }
+  requestRunning++
   let requestConfig = {timeout:arg.timeout*1000}
   // console.log(arg);
-  debug("http")
+  // debug("http")
+  let proxy = {}
   if(arg?.proxyAgent?.enabled){
-    requestConfig['proxy'] = {
+    proxy['proxy'] = {
       "protocol": arg.proxyAgent.protocol,
       "host": arg.proxyAgent.host,
       "port": arg.proxyAgent.port
     }
     if(arg.proxyAgent.auth.enabled){
-      requestConfig['proxy']["auth"]={
+      proxy['proxy']["auth"]={
         username:arg.proxyAgent.auth.username,
         password:arg.proxyAgent.auth.password
       }
@@ -333,17 +340,30 @@ const $http = async (url,arg,config={})=>{
     requestConfig['header'] = {'User-Agent':arg.userAgent}
   }
   // debug(requestConfig);
-  debug(`${url} : ${JSON.stringify({...requestConfig,...config})}`)
+  debug(`${url} : ${JSON.stringify({...requestConfig,...config,...proxy})}`)
   let res
   let retries = 3
   while (retries > 0 && !res) {
     try {
-      res = await axios.get(url,{...requestConfig,...config})
+      if(retries>1){
+        res = await axios.get(url,{...requestConfig,...config,...proxy})
+      }else{
+        debug({url,...requestConfig,...config})
+        res = await axios.get(url,{...requestConfig,...config})
+      }
     } catch (error) {
-      retries --
+      retries--
+      debug(`error(${retries}):${url}`)
+      if(retries <= 0) {
+        requestRunning--
+        console.log(error);
+        
+        throw error
+      }
       await sleep(1000)
     }
   }
+  requestRunning--
   return res
 }
 const getRssData = async(url,config)=>{
