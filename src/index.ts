@@ -94,7 +94,7 @@ export const Config: Schema<Config> = Schema.object({
   timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
   refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
   firstLoad:Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
-  merge:Schema.boolean().description('更新以合并消息发送，建议在rssItem多于1时开启').default(false),
+  merge:Schema.boolean().description('更新以合并消息发送，建议在rssItem多于1时开启(目前有BUG，需要开启否则消息会有问题)').default(true),
   mergeItem:Schema.boolean().description('单RSS订阅有多条更新时以合并消息发送，不同订阅链接间不会合并').default(true),
   maxRssItem: Schema.number().description('限制单RSS订阅更新时的最大推送数量上限，超出上限时较早的更新会被忽略，防止意外情况导致刷屏(0表示不限制)').default(10),
   urlDeduplication:Schema.boolean().description('同群组中不允许添加多条相同订阅').default(true),
@@ -279,6 +279,27 @@ const getImageUrl = async(url,arg)=>{
   // let res = await $http(url,arg,{responseType: 'blob'})
   // let file = new File([res.data], "name");
 }
+const getVideoUrl = async(url,arg)=>{
+  let res
+  try {
+    res = await $http(url,arg,{responseType: 'arraybuffer'})
+  } catch (error) {
+    return ''
+  }
+  let prefixList = ['png','jpeg','webp']
+  let prefix = res.headers["content-type"]||('image/' + (prefixList.find(i=>new RegExp(i).test(url))||'jpeg'))
+  let base64Prefix = `data:${prefix};base64,`
+  let base64Img = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
+  if(config.imageMode=='base64'){
+    // console.log(base64Img);
+    return base64Img
+  }else if(config.imageMode=='localFile'){
+    let fileUrl = await writeCacheFile(base64Img)
+    return fileUrl
+  }
+  // let res = await $http(url,arg,{responseType: 'blob'})
+  // let file = new File([res.data], "name");
+}
 const cacheDir = __dirname+'/cache'
 const puppeteerToFile = async(puppeteer:string)=>{
   let base64 = /(?<=src=").+?(?=")/.exec(puppeteer)[0]
@@ -286,7 +307,7 @@ const puppeteerToFile = async(puppeteer:string)=>{
   // console.log("Byte length: " + buffer.length);
   const MB = buffer.length / 1e+6
   debug("MB: " + MB);
-  return `<${MB<5?'img':'file'} src="${await writeCacheFile(base64)}"/>`
+  return `<${MB<18?'img':'file'} src="${await writeCacheFile(base64)}"/>`
 }
 const writeCacheFile = async(fileUrl:string)=>{
   if (!fs.existsSync(cacheDir)) {
@@ -592,7 +613,8 @@ const mixinArg = (arg)=>({
           return `未找到${options.remove}`
         }
         let removeItem =  rssList[removeIndex]
-        ctx.database.remove(('rssOwl' as any ), removeItem)
+        debug(`remove:${removeItem}`)
+        ctx.database.remove(('rssOwl' as any ), {id:removeItem.id})
         return '取消订阅成功！'
       }
       if(options?.removeAll!=undefined){
