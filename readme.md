@@ -15,6 +15,8 @@ rsso 需要订阅的链接或链接组
 rsso https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361
 //豆瓣小组-可爱事物分享
 rsso https://rsshub.rssforever.com/douban/group/648102
+//每天60s
+rsso https://hub.slarker.me/qqorw
 
 //(以下链接可能需要配置proxy才能显示完整内容)
 //telegram每日沙雕墙
@@ -31,22 +33,25 @@ rsso <url1>|<url2>|<url3>...
 
 当然，自己部署也是可以的
 
+部分博客或论坛等网站也会主动提供RSS订阅链接，但本插件并不支持旧版RSS格式
+
+部分链接不提供pubDate，导致插件无法比较更新时间，你需要使用 --daily 或refresh,forceLength 以在固定时间获取固定数量的更新，或者用 -p 随时取用最新的更新
+
+
+
 ### 2. 参数说明
 
-#### rssItem
-提取item中的key，按顺序推送 [RSS源`<item>`中的元素](https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt)
-可以使用`:`来定义解析规则，第一位必须是rss的key或者custom，第二位是可选的content，第三位是可选的merge来对该key中的消息合并
-content仅对description生效
+#### template
 ```
-rsso -i custom,description:image:merge <url>
+rsso -i custom <url>
 ```
 
 #### arg
 arg 可以写入局部参数，这会在使用该订阅时覆盖掉插件配置而不会影响其他订阅
 
-插件配置中大部分选项都可以在此修改
+支持的参数[merge|forceLength|reverse|timeout|refresh|merge|maxRssItem|firstLoad|bodyWidth|bodyPadding|custom|proxyAgent|auth|filter|block]
 
-videoRepost和toHTML在此仅可关闭，你只能在插件配置中打开
+插件配置中大部分选项都可以在此修改
 
 有forceLength的情况下每次获取订阅都会发送最新的几条消息
 
@@ -67,7 +72,7 @@ rsso -a forceLength:10,refresh:1440 <url>
 //domFrame仅对description生效，不允许写入title等key
 rsso -a domFrame:{{description}} <url>
 
-//custom对custom生效，使用`&nbsp;`代替空格以避免koishi解析错误
+//custom容易发生错误，请尽量避免使用，使用时`&nbsp;`代替空格以避免koishi解析错误
 rsso -i custom -C <div&nbsp;style='width:600px'>{{description}}</div> <url>
 ```
 
@@ -92,7 +97,7 @@ rsso -t 订阅名称 <url>
 ```
 
 #### force
-强行写入而不仅过验证，因此，订阅时最后一次更新不会被推送
+强行写入而不仅过验证，因此，订阅时最后一次更新不会被推送，同时也获取不到订阅名称
 
 #### test
 测试链接，不会写入订阅
@@ -105,12 +110,10 @@ rsso -T <url>
 指定该订阅每天更新时间和更新条数
 
 ```
-//refresh:1440,forceLength:10
+//每日早8点推送10条最新内容
 rsso -d 8:00/10 <url>
-//refresh:1440
-rsso -d 8:00 <url>
-
-rsso -a reverse:true -d 8:00/10 <url>
+//每日早10点推送1条最新内容
+rsso -d 10:00 <url>
 
 ```
 

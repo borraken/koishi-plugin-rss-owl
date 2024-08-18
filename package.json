@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-rss-owl",
   "description": "",
-  "version": "3.1.17",
+  "version": "4.0.7",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "contributors": [],
@@ -25,10 +25,10 @@
     "plugin"
   ],
   "peerDependencies": {
-    "koishi": "^4.17.7"
+    "koishi": "^4.17.11"
   },
   "dependencies": {
-    "axios": "^1.7.2",
+    "axios": "^1.7.3",
     "cheerio": "^1.0.0-rc.12",
     "koishi-plugin-puppeteer": "^3.8.4",
     "x2js": "^3.4.4"
