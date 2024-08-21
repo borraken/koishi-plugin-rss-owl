@@ -36,7 +36,7 @@ interface Config {
 }
 
 interface BasicConfig {
-  defaultTemplate?: 'content' | 'only text' | 'only image' | 'proto' | 'default' | 'only description' | 'custom'
+  defaultTemplate?: 'content' | 'only text' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   timeout?: number
   refresh?: number
   merge?: '不合并' | '有多条更新时合并' | '一直合并'
@@ -44,6 +44,7 @@ interface BasicConfig {
   firstLoad?: boolean
   urlDeduplication?: boolean
   imageMode?: 'base64' | 'File'
+  autoSplitImage?: boolean
   cacheDir?: string
   replaceDir?: string
   videoFetch?: boolean
@@ -65,6 +66,7 @@ interface MsgConfig {
   videoFilter?: boolean
   keywordFilter?: Array<string>
   keywordBlock?: Array<string>
+  rssHubUrl?:string
 }
 
 interface proxyAgent {
@@ -89,7 +91,7 @@ export interface rss {
   lastPubDate: number
 }
 export interface rssArg {
-  template?: 'content' | 'only text' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom'
+  template?: 'content' | 'only text' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   content: string | never
 
   forceLength?: number
@@ -107,14 +109,18 @@ export interface rssArg {
   block?: Array<string>
   // customUrlEnable?: boolean
 
+
+
+  split?:number
+
   nextUpdataTime?: number
 }
 // export const usage = ``
-const templateList = ['content', 'only text', 'only image', 'only video', 'proto', 'default', 'only description', 'custom']
+const templateList = ['content', 'only text', 'only image', 'only video', 'proto', 'default', 'only description', 'custom','link']
 
 export const Config = Schema.object({
   basic: Schema.object({
-    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` 基础图文模板，图片过多时可能出现问题，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` puppeteer模板，包含title等信息<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` 自定义puppeteer模板,见下方模板设置<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
+    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` 基础图文模板，图片过多时可能出现问题，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` puppeteer模板，包含title等信息<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` 自定义puppeteer模板，见下方模板设置<br>\`link\` puppeteer模板，截图description中首个a标签网站<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
       .default('content'),
     timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
     refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
@@ -123,6 +129,7 @@ export const Config = Schema.object({
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
+    autoSplitImage: Schema.boolean().description('自动垂直拆分大尺寸图片以避免发送限制').default(true),
     cacheDir: Schema.string().description('图片模式File时使用的缓存路径').default('data/cache/rssOwl'),
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
     // videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
@@ -165,20 +172,13 @@ export const Config = Schema.object({
     userAgent: Schema.string(),
   }).description('网络设置'),
   msg: Schema.object({
+    rssHubUrl:Schema.string().role('link').description('使用快速订阅时rssHub的地址').default('https://rsshub.app'),
     keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default(['nsfw']),
     keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default(['^nsfw$']),
     videoRepost: Schema.boolean().description('允许发送视频').default(false),
     videoFilter: Schema.boolean().description('过滤含有视频的推送，该推送不会发出').default(true),
     censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   }).description('消息处理'),
-  // quickUrl:Schema.intersect([
-  //   Schema.object({enabled: Schema.boolean().default(false).description('开发中：允许使用快速订阅').experimental(),}),
-  //   Schema.union([Schema.object({
-  //     enabled: Schema.const(true).required(),
-  //     rssHubUrl:Schema.string().role('link').description('rssHub的地址').default('https://rsshub.rssforever.com').experimental(),
-  //     biliVideoSubmission:Schema.boolean().description('通过 bili://<用户id> 订阅b站用户视频更新，内置arg规则，例：rsso bili://2267573').default(true).experimental(),
-  //   }),Schema.object({}),]),
-  // ]).experimental(),
   // customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
   debug: Schema.boolean().description('调试开关').default(false),
 })
@@ -228,20 +228,15 @@ export function apply(ctx: Context, config: Config) {
   //     }
   // }
   // const __dirname = './cache'
-  const getImageUrl = async (url, arg) => {
+  const getImageUrl = async (url, arg,useBase64Mode=false) => {
     let res
-    try {
-      res = await $http(url, arg, { responseType: 'arraybuffer' })
-    } catch (error) {
-      debug(error)
-      return ''
-    }
+    res = await $http(url, arg, { responseType: 'arraybuffer' })
     debug(res.data)
     let prefixList = ['png', 'jpeg', 'webp']
     let prefix = res.headers["content-type"] || ('image/' + (prefixList.find(i => new RegExp(i).test(url)) || 'jpeg'))
     let base64Prefix = `data:${prefix};base64,`
     let base64Img = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
-    if (config.basic.imageMode == 'base64') {
+    if (config.basic.imageMode == 'base64'||useBase64Mode) {
       // console.log(base64Img);
       return base64Img
     } else if (config.basic.imageMode == 'File') {
@@ -278,7 +273,27 @@ export function apply(ctx: Context, config: Config) {
     // console.log("Byte length: " + buffer.length);
     const MB = buffer.length / 1e+6
     debug("MB: " + MB);
-    return `<${MB < 18 ? 'img' : 'file'} src="${await writeCacheFile(base64)}"/>`
+    return `<file src="${await writeCacheFile(base64)}"/>`
+  }
+  const quickList = [
+    {prefix:"rss",name:"rsshub通用订阅",detail:"rsshub通用快速订阅，用于快速写入及通过配置动态更换rsshub地址",explain:"rss:param1/param2/...",example:"rss:apnews/rss/business",argLength:[1,9],replace:"$1$2$3$4$5$6$7$8$9"},
+    {prefix:"tg",name:"电报频道",detail:"输入电报频道信息中的链接地址最后部分",explain:"tg:[:channel_name]",example:"tg:woshadiao",argLength:[1,1],replace:"/telegram/channel$1"},
+    {prefix:"mp-tag",name:"微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，点入 Tag 的链接如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入__biz和album_id",explain:"wx-tag:[:__biz]/[:album_id]",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",argLength:[2,2],replace:"/wechat/mp/msgalbum$1$2"},
+    {prefix:"gh",name:"github相关",detail:"Repo Issue:gh:issue/[:user]/[:repo]/[:state?(open|closed|all)]/[:labels?(open|bug|...)]\nRepo Stars:gh:stars/[:user]/[:repo]\nTrending:gh:trending/[:since(daliy|weekly|monthly)]/[:language?(javascript|c#|c++|...)]/[:spoken_language?(English|Chinese|...)]\nUser Activities:gh:activity/[:user]",explain:"gh:[type]/[param1]/[param2]...",example:"gh:issue/koishijs/koishi/open",argLength:[2,5],replace:"/github$1$2$3$4$5"},
+  ]
+  const parseQuickUrl = (url)=>{
+    let correntQuickObj = quickList.find(i=>new RegExp(`^${i.prefix}:`).test(url))
+    if(!correntQuickObj)return url
+    let params = url.match(new RegExp(`(?<=^${correntQuickObj.prefix}:).*`))[0].split("/")
+    if(params.length<correntQuickObj.argLength[0]||params.length>correntQuickObj.argLength[1]){
+      throw new Error("amount of params is wrong")
+    }
+    let rUrl = correntQuickObj.replace.replace(/\$\d/g,v=>{
+      let index = +(v.match(/\$(.*)/)[1])-1
+      return params[index]?`/${params[index]}`:""
+    })
+    debug(config.msg.rssHubUrl + rUrl)
+    return config.msg.rssHubUrl + rUrl
   }
   const getCacheDir = () => {
     let dir = config.basic.cacheDir ? path.resolve('./', config.basic.cacheDir || "") : `${__dirname}/cache`
@@ -320,7 +335,7 @@ export function apply(ctx: Context, config: Config) {
   const delCache = async () => {
     const cacheDir = getCacheDir()
     fs.readdirSync(cacheDir).forEach(file => {
-      fs.unlinkSync(path.join(cacheDir, file))
+      if(path.extname(file) == ".png")fs.unlinkSync(path.join(cacheDir, file))
     })
     return
   }
@@ -342,7 +357,7 @@ export function apply(ctx: Context, config: Config) {
         "host": arg.proxyAgent.host,
         "port": arg.proxyAgent.port
       }
-      if (arg.proxyAgent.auth.enabled) {
+      if (arg?.proxyAgent?.auth?.enabled) {
         proxy['proxy']["auth"] = {
           username: arg.proxyAgent.auth.username,
           password: arg.proxyAgent.auth.password
@@ -353,9 +368,10 @@ export function apply(ctx: Context, config: Config) {
       requestConfig['header'] = { 'User-Agent': arg.userAgent }
     }
     // debug(requestConfig);
-    // debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`)
+    debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`)
     let res
     let retries = 3
+    // debug({url, arg, config})
     while (retries > 0 && !res) {
       try {
         if (retries > 1) {
@@ -366,10 +382,10 @@ export function apply(ctx: Context, config: Config) {
         }
       } catch (error) {
         retries--
-        debug(`error(${retries}):${url}`)
         if (retries <= 0) {
           requestRunning--
-          console.log(error);
+          debug({url, arg, config})
+          debug(error);
 
           throw error
         }
@@ -379,6 +395,31 @@ export function apply(ctx: Context, config: Config) {
     requestRunning--
     return res
   }
+  const renderHtml2Image = async (htmlContent:string)=>{
+    let page = await ctx.puppeteer.page()
+    //截图
+    debug(htmlContent)
+    await page.setContent(htmlContent)
+    if(!config.basic.autoSplitImage)return h.image(await page.screenshot({type:"png"}),'image/png') 
+    let [height,width,x,y] = await page.evaluate(()=>[document.body.offsetHeight,document.body.offsetWidth,parseInt(document.defaultView.getComputedStyle(document.body).marginLeft)||0,parseInt(document.defaultView.getComputedStyle(document.body).marginTop)||0])
+    let size = 10000
+    debug([height,width,x,y])
+    const split = Math.ceil(height/size)
+    if(!split)return h.image(await page.screenshot({type:"png",clip:{x,y,width,height}}),'image/png')
+    debug({height,width,split})
+    const reduceY =(index) =>{
+      let y = Math.floor(height/split*index)
+      return y
+      // return index?(y-100):y
+    }
+    const reduceHeight =(index) =>{
+      let h = Math.floor(height/split)
+      return h
+      // return (index==(split-1))?h:(h+100)
+    }
+    let imgData = await Promise.all(Array.from({length:split},async(v,i)=>await page.screenshot({type:"png",clip:{x,y:reduceY(i)+y,width,height:reduceHeight(i)}})))
+    return imgData.map(i=>h.image(i,'image/png')).join("")
+  }
   const getRssData = async (url, config) => {
     // let rssXML = await fetch(url)
     // let rssText = await rssXML.text()
@@ -386,8 +427,10 @@ export function apply(ctx: Context, config: Config) {
     // console.log(rssXML);
     let res = (await $http(url, config)).data
     let rssJson = x2js.xml2js(res)
-    rssJson.rss.channel.item = rssJson.rss.channel.item.map(i => ({ ...i, rss: rssJson.rss }))
-    return rssJson
+    debug(rssJson);
+    rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
+    const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i, rss: rssJson.rss }))
+    return rssItemList
   }
   const parseRssItem = async (item: any, arg: rssArg, authorId: string | number) => {
     // debug(`parseRssItem:start (${item.rss.channel.title})`);
@@ -408,9 +451,17 @@ export function apply(ctx: Context, config: Config) {
       description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
       // debug(description);
       html = cheerio.load(description)
+      if(arg?.proxyAgent?.enabled){
+        debug("puppeteer:proxyAgent");
+        await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
+      }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
-      msg = await ctx.puppeteer.render(html.xml())
-      if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
+      if(config.basic.imageMode=='base64'){
+        msg = (await renderHtml2Image(html.xml())).toString()
+      }else if(config.basic.imageMode=='File'){
+        msg = await ctx.puppeteer.render(html.xml())
+        msg = await puppeteerToFile(msg)
+      }
     } else if (template == "content") {
       // debug("content");
       html = cheerio.load(description)
@@ -427,7 +478,7 @@ export function apply(ctx: Context, config: Config) {
         let src = match.match(/\$img\{\{(.*?)\}\}/)[1]
         return `<img src="${imgBufferList[src]}"/>`
       })
-      msg = pushVideo(msg, html)
+      msg = `${item?.title||''}\n${msg}`
     } else if (template == "only text") {
       html = cheerio.load(description)
       await Promise.all(html('img').map(async (v, i) => i.text = await getImageUrl(i.attribs.src, arg)))
@@ -435,10 +486,15 @@ export function apply(ctx: Context, config: Config) {
     } else if (template == "only image") {
       html = cheerio.load(description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
-      msg = `<message forward>${imgList.map(img => `<img src="${img}"/>`)}</message>`
-    } else if (template == "only video" && config.basic.videoFetch) {
-      html = cheerio.load(description)
-      msg = pushVideo("", html)
+      msg = imgList.map(img => `<img src="${img}"/>`).join("")
+    } else if (template == "only video") {
+      if(config.basic.videoFetch){
+        html = cheerio.load(description)
+        let videoList = await Promise.all([...html('video').map((v, i) => i.attribs.src)].map(async i => h.video(i) ))
+        msg = videoList.join("")
+      }else{
+        msg = '未启用videoFetch'
+      }
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
@@ -446,33 +502,132 @@ export function apply(ctx: Context, config: Config) {
       description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
       debug(description);
       html = cheerio.load(description)
+      if(arg?.proxyAgent?.enabled){
+        debug("puppeteer:proxyAgent");
+        await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
+      }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
-      msg = await ctx.puppeteer.render(html.xml())
+      if(config.basic.imageMode=='base64'){
+        msg = (await renderHtml2Image(html.xml())).toString()
+      }else if(config.basic.imageMode=='File'){
+        msg = await ctx.puppeteer.render(html.xml())
+        msg = await puppeteerToFile(msg)
+      }
       if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
     } else if (template == "only description") {
       // debug("only description");
       description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
       // debug(description);
       html = cheerio.load(description)
+      if(arg?.proxyAgent?.enabled){
+        debug("puppeteer:proxyAgent");
+        await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
+      }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
-      msg = await ctx.puppeteer.render(html.xml())
-      if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
+      if(config.basic.imageMode=='base64'){
+        msg = (await renderHtml2Image(html.xml())).toString()
+      }else if(config.basic.imageMode=='File'){
+        msg = await ctx.puppeteer.render(html.xml())
+        msg = await puppeteerToFile(msg)
+      }
+    } else if (template == "link") {
+      // debug("only description");
+      html = cheerio.load(description)
+      debug(html('a')[0].attribs)
+      let src = html('a')[0].attribs.href
+      let html2 = cheerio.load((await $http(src,arg)).data)
+      if(arg?.proxyAgent?.enabled){
+        debug("puppeteer:proxyAgent");
+        await Promise.all(html2('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
+      }
+      html2('img').attr('style', 'object-fit:scale-down;max-width:100%;')
+      html2('body').attr('style', `width:${config.template.bodyWidth}px;padding:${config.template.bodyPadding}px;`)
+      if(config.basic.imageMode=='base64'){
+        msg = (await renderHtml2Image(html2.xml())).toString()
+      }else if(config.basic.imageMode=='File'){
+        msg = await ctx.puppeteer.render(html2.xml())
+        msg = await puppeteerToFile(msg)
+      }
     }
     // debug(`parseRssItem:end (${item.rss.channel.title})`);
+    msg = pushVideo(msg, html)
     debug(msg);
     if (config.msg.censor) {
       return `<censor>${msg}</censor>`
     }
     return msg
   }
+  const feeder = async () => {
+    debug("feeder");
+    const rssList = await ctx.database.get(('rssOwl' as any), {})
+    // debug(rssList);
+    for (const rssItem of rssList) {
+      // console.log(`${rssItem.platform}:${rssItem.guildId}`);
+      try {
+        let arg: rssArg = mixinArg(rssItem.arg || {})
+        if (rssItem.arg.refresh) {
+          if (arg.nextUpdataTime > +new Date()) continue
+          let nextUpdataTime = arg.nextUpdataTime + arg.refresh
+          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { nextUpdataTime })
+        }
+        try {
+          let rssItemList = (await Promise.all(rssItem.url.split("|")
+            .map(i=>parseQuickUrl(i))
+            .map(async url => await getRssData(url, arg)))).flat(1)
+          let itemArray = rssItemList.sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
+            .filter(item => !arg?.filter?.find(keyword => new RegExp(keyword, 'im').test(item.title) || new RegExp(keyword, 'im').test(item.description)))
+  
+          if (arg.reverse) {
+            itemArray = itemArray.reverse()
+          }
+          // debug("itemArray");
+          debug(itemArray[0]);
+          let messageList, rssItemArray
+          let lastPubDate = +new Date(itemArray[0].pubDate) || 0
+          if (rssItem.arg.forceLength) {
+            // debug("forceLength");
+            rssItemArray = itemArray.filter((v, i) => i < arg.forceLength)
+            messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, arg, rssItem.author)))
+          } else {
+            let rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
+            if (!rssItemArray.length) continue
+            debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`);
+            debug(rssItemArray.map(i => i.title));
+            messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, rssItem.author)))
+          }
+          let message
+          if (arg.merge===true) {
+            message = `<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`
+          } else if (arg.merge === false) {
+            message = messageList.join("")
+          } else if (config.basic.merge == "一直合并") {
+            message = `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>`
+          } else if (config.basic.merge == "不合并") {
+            message = messageList.join("")
+          } else if (config.basic.merge == "有多条更新时合并") {
+            message = messageList.length > 1 ? `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>` : messageList.join("")
+          }
+          ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message)
+          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate })
+        } catch (error) {
+          logger.error(`更新失败:${JSON.stringify(rssItem)}`)
+          logger.error(error)
+        }
+        
+      } catch (error) {
+        debug(error)
+      }
+    }
+  }
   const formatArg = (options): rssArg => {
     let { arg, template, daily } = options
     let json = Object.assign({}, ...(arg?.split(',')?.map(i => ({ [i.split(":")[0]]: i.split(":")[1] })) || []))
     let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "custom", "proxyAgent", "auth", "filter", "block"]
     let booleanKey = ['firstLoad', 'merge', "videoRepost"]
+    let numberKey = ['forceLength', "timeout",'refresh','maxRssItem','bodyWidth','bodyPadding']
     let falseContent = ['false', 'null', '']
 
-    json = Object.assign({}, ...Object.keys(json).filter(i => key.some(key => key == i)).map(key => ({ [key]: booleanKey.some(bkey => bkey == key) ? falseContent.some(c => c == json[key]) : json[key] })))
+    json = Object.assign({}, ...Object.keys(json).filter(i => key.some(key => key == i)).map(key => ({ [key]: booleanKey.some(bkey => bkey == key) ? falseContent.some(c => c == json[key]) : numberKey.some(nkey => nkey == key)?(+json[key]):json[key] })))
 
 
     // if (rssItem) {
@@ -532,63 +687,6 @@ export function apply(ctx: Context, config: Config) {
     }
     return json
   }
-  const feeder = async () => {
-    debug("feeder");
-    const rssList = await ctx.database.get(('rssOwl' as any), {})
-    // debug(rssList);
-    for (const rssItem of rssList) {
-      // console.log(`${rssItem.platform}:${rssItem.guildId}`);
-      let arg: rssArg = mixinArg(rssItem.arg || {})
-      if (rssItem.arg.refresh) {
-        if (arg.nextUpdataTime > +new Date()) continue
-        let nextUpdataTime = arg.nextUpdataTime + arg.refresh
-        await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { nextUpdataTime })
-      }
-      try {
-        let rssJsonArray = (await Promise.all(rssItem.url.split("|")
-          .map(async url => await getRssData(url, arg))))
-        let itemArray = rssJsonArray.map(i => i?.rss?.channel?.item || []).flat(1)
-          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-          .filter(item => !arg?.filter?.find(keyword => new RegExp(keyword, 'im').test(item.title) || new RegExp(keyword, 'im').test(item.description)))
-
-        if (arg.reverse) {
-          itemArray = itemArray.reverse()
-        }
-        // debug("itemArray");
-        debug(itemArray[0]);
-        let messageList, rssItemArray
-        let lastPubDate = +new Date(itemArray[0].pubDate) || 0
-        if (rssItem.arg.forceLength) {
-          // debug("forceLength");
-          rssItemArray = itemArray.filter((v, i) => i < arg.forceLength)
-          messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, arg, rssItem.author)))
-        } else {
-          let rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
-          if (!rssItemArray.length) continue
-          debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`);
-          debug(rssItemArray.map(i => i.title));
-          messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, rssItem.author)))
-        }
-        let message
-        if (arg.merge) {
-          message = `<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`
-        } else if (arg.merge === false) {
-          message = messageList.join("")
-        } else if (config.basic.merge == "一直合并") {
-          message = `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>`
-        } else if (config.basic.merge == "不合并") {
-          message = messageList.join("")
-        } else if (config.basic.merge == "有多条更新时合并") {
-          message = messageList.length > 1 ? `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>` : messageList.join("")
-        }
-        ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message)
-        await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate })
-      } catch (error) {
-        logger.error(`更新失败:${JSON.stringify(rssItem)}`)
-        logger.error(error)
-      }
-    }
-  }
   const mixinArg = (arg) => ({
     ...Object.assign({}, ...Object.values(config)),
     ...arg,
@@ -598,16 +696,15 @@ export function apply(ctx: Context, config: Config) {
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
     // await sendMessageToChannel(ctx,{platform:"sandbox:rdbvu1xb9nn",guildId:"#"},"123")
-    delCache()
     feeder()
     interval = setInterval(async () => {
-      await delCache()
+      if(config.basic.imageMode=='File')await delCache()
       feeder()
     }, config.basic.refresh * 1000)
   })
   ctx.on('dispose', async () => {
     clearInterval(interval)
-    delCache()
+    if(config.basic.imageMode=='File')delCache()
   })
   ctx.guild()
     .command('rssowl <url:text>', '订阅 RSS 链接')
@@ -624,6 +721,7 @@ export function apply(ctx: Context, config: Config) {
     // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
     .option('daily', '-d <content>')
     .option('test', '-T 测试')
+    .option('quick', '-q [content] 查询快速订阅列表')
     .example('rsso https://hub.slarker.me/qqorw')
     .action(async ({ session, options }, url) => {
       // debug("init")
@@ -633,11 +731,23 @@ export function apply(ctx: Context, config: Config) {
       const { platform } = session.event as any
       const { id: author } = session.event.user as any
       debug(`${platform}:${author}:${guildId}`)
+      if (options?.quick==='') {
+        return '输入 rsso -q [id] 查询详情\n'+quickList.map((v,i)=>`${i+1}.${v.name}`).join('\n')
+      }
+      if (options?.quick) {
+        let correntQuickObj = quickList[parseInt(options?.quick)-1]
+        return `${correntQuickObj.name}\n${correntQuickObj.detail}\n${correntQuickObj.explain}\n例:rsso -T ${correntQuickObj.example}`
+      }
       if ((platform.indexOf("sandbox") + 1) && !options.test) {
         session.send('沙盒中无法推送更新，但RSS依然会被订阅，建议使用 -T 选项进行测试')
       }
       // session.send(__filename)
       const rssList = await ctx.database.get(('rssOwl' as any), { platform, guildId })
+      if (options.list) {
+        // debug(`list`)
+        if (!rssList.length) return '未订阅任何链接。'
+        return "id:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString()})`).join('\n')
+      }
       // debug(rssList)
       if (options.pull) {
         // debug(`pull:${options.pull}`)
@@ -652,10 +762,9 @@ export function apply(ctx: Context, config: Config) {
         let { url, author, arg } = item
         arg = mixinArg(arg)
         //
-        let rssJsonArray = await Promise.all(url.split("|")
+        let rssItemList = await Promise.all(url.split("|")
           .map(async url => await getRssData(url, arg)))
-        let itemArray = rssJsonArray.map(i => i.rss.channel.item)
-          .flat(1)
+        let itemArray = rssItemList.flat(1)
           .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
         // debug("itemArray");
         // debug(itemArray);
@@ -667,28 +776,22 @@ export function apply(ctx: Context, config: Config) {
         // debug(messageList)
         return `<message forward>${messageList.join('')}</message>`
       }
-      let rssJson
+      let rssItemList
       let itemArray, item
       let optionArg = formatArg(options)
       let arg = mixinArg(optionArg)
-      let urlList = url?.split('|')
+      let urlList = url?.split('|')?.map(i=>parseQuickUrl(i))
       if (options.test) {
         debug(`test:${url}`)
-        // debug({ guildId, platform, author, arg, optionArg })
+        debug({ guildId, platform, author, arg, optionArg })
         if (!url) return '请输入URL'
-        let rssJsonArray = await Promise.all(url.split("|")
+        let rssItemList = await Promise.all(urlList
           .map(async url => await getRssData(url, arg)))
-        let itemArray = rssJsonArray.map(i => i.rss.channel.item)
+        let itemArray = rssItemList
           .flat(1)
           .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-        // debug("itemArray");
-        // debug(itemArray);
         let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
-        // debug("rssItemArray");
-        // debug(rssItemArray);
         let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, author)))).flat(Infinity)
-        // debug("mergeItem");
-        // debug(messageList)
         return `<message forward>${messageList.join('')}</message>`
       }
       if (options.remove) {
@@ -711,11 +814,6 @@ export function apply(ctx: Context, config: Config) {
         let rssLength = rssList.length
         await ctx.database.remove(('rssOwl' as any), { platform, guildId })
         return `已删除${rssLength}条`
-      }
-      if (options.list) {
-        // debug(`list`)
-        if (!rssList.length) return '未订阅任何链接。'
-        return "id:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString()})`).join('\n')
       }
       if (config.basic.urlDeduplication && (rssList.findIndex(i => i.url == url) + 1)) {
         return '已订阅此链接。'
@@ -752,27 +850,24 @@ export function apply(ctx: Context, config: Config) {
         return '添加订阅成功'
       }
       try {
-        if (urlList.length === 1) {
-          rssJson = await getRssData(url, arg)
-          itemArray = rssJson.rss.channel.item
-          item = rssJson.rss.channel.item[0]
-          subscribe.title = subscribe.title || rssJson.rss.channel.title
-        } else {
-          rssJson = await Promise.all(urlList.map(async url => await getRssData(url, arg)))
-          itemArray = rssJson.map(i => i.rss.channel.item).flat(1).sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-          item = itemArray.sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))[0]
-        }
-        if (!item.pubDate || optionArg.forceLength) {
+        if (!url) return '请输入URL'
+        let rssItemList = await Promise.all(urlList.map(async url => await getRssData(url, arg)))
+        let itemArray = rssItemList.flat(1).sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
+        .filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1))
+        .filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
+        if(urlList.length === 1)subscribe.title = subscribe.title || itemArray[0].rss.channel.title
+        item = itemArray[0]
+        if (!(item.pubDate || optionArg.forceLength)) {
           return "RSS中未找到可用的pubDate，这将导致无法取得更新时间，请使用forceLength属性强制在每次更新时取得最新的订阅内容"
         }
+
         subscribe.lastPubDate = item.pubDate || subscribe.lastPubDate
         ctx.database.create(('rssOwl' as any), subscribe)
         // rssOwl.push(JSON.stringify(subscribe)) 
         if (arg.firstLoad) {
           if (arg.forceLength) {
-            itemArray = itemArray.filter((v, i) => i < arg.forceLength)
             let messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, arg, item.author)))
-            let message = item.arg.merge ? `<message><author id="${item.author}"/>${messageList.join("")}</message>` : messageList.join("")
+            let message = item.arg.merge ? `<message forward><author id="${item.author}"/>${messageList.join("")}</message>` : messageList.join("")
             return message
           } else {
             return `<message>添加订阅成功</message>${await parseRssItem(item, arg, author)}`

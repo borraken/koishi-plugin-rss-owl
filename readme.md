@@ -25,7 +25,7 @@ rsso https://rsshub.rssforever.com/telegram/channel/woshadiao
 rsso http://feeds.feedburner.com/ruanyifeng
 
 //链接组可以将多个链接的推送合并，方便管理
-rsso <url1>|<url2>|<url3>...
+rsso <url>|<url>|<url>...
 ```
 你可以在[RSSHub](https://docs.rsshub.app/zh/routes/popular)中找到需要的链接
 
@@ -119,7 +119,7 @@ rsso -d 10:00 <url>
 
 ##### todu
 - [ ] 稳定使用
-- [ ] 快速订阅功能
+- [x] 快速订阅功能
 - [ ] 视频本地转发功能
 - [ ] 对返回磁链的订阅自动下载压缩发送
 
