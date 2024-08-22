@@ -82,12 +82,18 @@ rsso -i custom -C <div&nbsp;style='width:600px'>{{description}}</div> <url>
 rsso -k nsfw,something <url>
 ```
 
-#### content
-[default|html|text|image|video|proto]
+#### template
+[content|text|image|video|proto|default|description|custom|link]
+不同的模板有不同的处理方式
+最常用的content,default,custom
+content是最基础的模板，无需pptr，图文都可以显示
+default是包含了title等信息的pptr模板
+custom模板可以自定义内容，相当于强化版default，在默认值中，我展示了订阅的部分信息，并使用了护眼的背景色
+text,image,video,proto都是根据description做处理,用于在一些简单的订阅中尽可能精简信息
+link用于一些返回链接的订阅，例如：[华尔街日报(电报频道)](https://rsshub.app/telegram/channel/wsj_rss)，效果类似于description
 
-提取规则,default会优先使用html,关闭html时会将文字和图片分开发送,text|image|video仅会发送相关的内容,proto将不做任何处理直接发送
 ```
-rsso -c html <url>
+rsso -i content <url>
 ```
 
 #### title
