@@ -44,10 +44,10 @@ interface BasicConfig {
   firstLoad?: boolean
   urlDeduplication?: boolean
   imageMode?: 'base64' | 'File'
+  videoMode?: 'filter'|'href'|'base64' | 'File'
   autoSplitImage?: boolean
   cacheDir?: string
   replaceDir?: string
-  videoFetch?: boolean
 }
 
 interface TemplateConfig {
@@ -62,8 +62,6 @@ interface NetConfig {
 }
 interface MsgConfig {
   censor?: boolean
-  videoRepost?: boolean
-  videoFilter?: boolean
   keywordFilter?: Array<string>
   keywordBlock?: Array<string>
   rssHubUrl?:string
@@ -129,10 +127,10 @@ export const Config = Schema.object({
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
+    videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
     autoSplitImage: Schema.boolean().description('自动垂直拆分大尺寸图片以避免发送限制').default(true),
-    cacheDir: Schema.string().description('图片模式File时使用的缓存路径').default('data/cache/rssOwl'),
+    cacheDir: Schema.string().description('File模式时使用的缓存路径').default('data/cache/rssOwl'),
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
-    // videoFetch: Schema.boolean().description('开发中：视频本地转发').default(false).experimental(),
   }).description('基础设置'),
   template: Schema.object({
     bodyWidth: Schema.number().description('puppeteer图片的宽度(px)，较低的值可能导致排版错误，仅在内置模板生效').default(600),
@@ -175,8 +173,6 @@ export const Config = Schema.object({
     rssHubUrl:Schema.string().role('link').description('使用快速订阅时rssHub的地址').default('https://rsshub.app'),
     keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default(['nsfw']),
     keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default(['^nsfw$']),
-    videoRepost: Schema.boolean().description('允许发送视频').default(false),
-    videoFilter: Schema.boolean().description('过滤含有视频的推送，该推送不会发出').default(true),
     censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   }).description('消息处理'),
   // customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
@@ -235,38 +231,36 @@ export function apply(ctx: Context, config: Config) {
     let prefixList = ['png', 'jpeg', 'webp']
     let prefix = res.headers["content-type"] || ('image/' + (prefixList.find(i => new RegExp(i).test(url)) || 'jpeg'))
     let base64Prefix = `data:${prefix};base64,`
-    let base64Img = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
+    let base64Data = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
     if (config.basic.imageMode == 'base64'||useBase64Mode) {
       // console.log(base64Img);
-      return base64Img
+      return base64Data
     } else if (config.basic.imageMode == 'File') {
-      let fileUrl = await writeCacheFile(base64Img)
+      let fileUrl = await writeCacheFile(base64Data)
       return fileUrl
     }
     // let res = await $http(url,arg,{responseType: 'blob'})
     // let file = new File([res.data], "name");
   }
-  // const getVideoUrl = async (url, arg) => {
-  //   let res
-  //   try {
-  //     res = await $http(url, arg, { responseType: 'arraybuffer' })
-  //   } catch (error) {
-  //     return ''
-  //   }
-  //   let prefixList = ['png', 'jpeg', 'webp']
-  //   let prefix = res.headers["content-type"] || ('image/' + (prefixList.find(i => new RegExp(i).test(url)) || 'jpeg'))
-  //   let base64Prefix = `data:${prefix};base64,`
-  //   let base64Img = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
-  //   if (config.basic.imageMode == 'base64') {
-  //     // console.log(base64Img);
-  //     return base64Img
-  //   } else if (config.basic.imageMode == 'File') {
-  //     let fileUrl = await writeCacheFile(base64Img)
-  //     return fileUrl
-  //   }
-  //   // let res = await $http(url,arg,{responseType: 'blob'})
-  //   // let file = new File([res.data], "name");
-  // }
+  const getVideoUrl = async (url, arg,useBase64Mode=false,dom) => {
+    debug(dom.children);
+    let src = dom.attribs.src || dom.children["0"].attribs.src
+    let res
+    if(config.basic.videoMode == "href"){
+      return src
+    }else{
+      res = await $http(src, arg, { responseType: 'arraybuffer' })
+      let prefix = res.headers["content-type"] 
+      let base64Prefix = `data:${prefix};base64,`
+      let base64Data = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
+      if (config.basic.videoMode == 'base64') {
+        return base64Data
+      } else if (config.basic.videoMode == 'File') {
+        let fileUrl = await writeCacheFile(base64Data)
+        return fileUrl
+      }
+    }
+  }
   const puppeteerToFile = async (puppeteer: string) => {
     let base64 = /(?<=src=").+?(?=")/.exec(puppeteer)[0]
     const buffer = Buffer.from(base64.substring(base64.indexOf(',') + 1), 'base64');
@@ -335,7 +329,7 @@ export function apply(ctx: Context, config: Config) {
   const delCache = async () => {
     const cacheDir = getCacheDir()
     fs.readdirSync(cacheDir).forEach(file => {
-      if(path.extname(file) == ".png")fs.unlinkSync(path.join(cacheDir, file))
+      if(!!path.extname(file))fs.unlinkSync(path.join(cacheDir, file))
     })
     return
   }
@@ -433,7 +427,6 @@ export function apply(ctx: Context, config: Config) {
     return rssItemList
   }
   const parseRssItem = async (item: any, arg: rssArg, authorId: string | number) => {
-    // debug(`parseRssItem:start (${item.rss.channel.title})`);
     // debug(arg);
     // let messageItem = Object.assign({}, ...arg.rssItem.map(key => ({ [key]: item[key.split(":")[0]] ?? "" })))
     let template = arg.template
@@ -442,10 +435,13 @@ export function apply(ctx: Context, config: Config) {
     let description: string = item.description?.join?.('') || item.description
     //block
     arg.block?.forEach(blockWord => description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill("*").join("")))
-    // let pptrTemplateList = ['content', 'only text', 'only image', 'only video', 'proto', 'default', 'only description', 'custom']
-    const pushVideo = (msg, html) => `${msg}${config.basic.videoFetch ? html('video').map((v, i) => i.attribs.src).map(i => `<video src="${i}"/>`).join() : ''}`
+    // const pushVideo = (msg, html) => `${msg}${config.basic.videoFetch ? html('video').map((v, i) => i.attribs.src).map(i => `<video src="${i}"/>`).join() : ''}`
     // debug(template);
-
+    if(config.basic.videoMode==='filter'){
+      html = cheerio.load(description)
+      html('video').length > 0
+      return ''
+    }
     if (template == "custom") {
       debug("custom");
       description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
@@ -462,6 +458,8 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.xml())
         msg = await puppeteerToFile(msg)
       }
+      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      
     } else if (template == "content") {
       // debug("content");
       html = cheerio.load(description)
@@ -478,23 +476,18 @@ export function apply(ctx: Context, config: Config) {
         let src = match.match(/\$img\{\{(.*?)\}\}/)[1]
         return `<img src="${imgBufferList[src]}"/>`
       })
-      msg = `${item?.title||''}\n${msg}`
+      msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
+      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
     } else if (template == "only text") {
       html = cheerio.load(description)
-      await Promise.all(html('img').map(async (v, i) => i.text = await getImageUrl(i.attribs.src, arg)))
       msg = html.text()
     } else if (template == "only image") {
       html = cheerio.load(description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
     } else if (template == "only video") {
-      if(config.basic.videoFetch){
-        html = cheerio.load(description)
-        let videoList = await Promise.all([...html('video').map((v, i) => i.attribs.src)].map(async i => h.video(i) ))
-        msg = videoList.join("")
-      }else{
-        msg = '未启用videoFetch'
-      }
+      html = cheerio.load(description)
+      msg = (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
@@ -514,6 +507,7 @@ export function apply(ctx: Context, config: Config) {
         msg = await puppeteerToFile(msg)
       }
       if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
+      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
     } else if (template == "only description") {
       // debug("only description");
       description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
@@ -530,6 +524,7 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.xml())
         msg = await puppeteerToFile(msg)
       }
+      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
     } else if (template == "link") {
       // debug("only description");
       html = cheerio.load(description)
@@ -549,8 +544,7 @@ export function apply(ctx: Context, config: Config) {
         msg = await puppeteerToFile(msg)
       }
     }
-    // debug(`parseRssItem:end (${item.rss.channel.title})`);
-    msg = pushVideo(msg, html)
+    // msg = pushVideo(msg, html)
     debug(msg);
     if (config.msg.censor) {
       return `<censor>${msg}</censor>`
@@ -596,6 +590,7 @@ export function apply(ctx: Context, config: Config) {
             messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, rssItem.author)))
           }
           let message
+          if(!messageList.join(""))return
           if (arg.merge===true) {
             message = `<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`
           } else if (arg.merge === false) {
@@ -623,7 +618,7 @@ export function apply(ctx: Context, config: Config) {
     let { arg, template, daily } = options
     let json = Object.assign({}, ...(arg?.split(',')?.map(i => ({ [i.split(":")[0]]: i.split(":")[1] })) || []))
     let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "custom", "proxyAgent", "auth", "filter", "block"]
-    let booleanKey = ['firstLoad', 'merge', "videoRepost"]
+    let booleanKey = ['firstLoad', 'merge']
     let numberKey = ['forceLength', "timeout",'refresh','maxRssItem','bodyWidth','bodyPadding']
     let falseContent = ['false', 'null', '']
 
@@ -763,6 +758,7 @@ export function apply(ctx: Context, config: Config) {
         arg = mixinArg(arg)
         //
         let rssItemList = await Promise.all(url.split("|")
+          .map(i=>parseQuickUrl(i))
           .map(async url => await getRssData(url, arg)))
         let itemArray = rssItemList.flat(1)
           .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
@@ -806,7 +802,7 @@ export function apply(ctx: Context, config: Config) {
         let removeItem = rssList[removeIndex]
         debug(`remove:${removeItem}`)
         ctx.database.remove(('rssOwl' as any), { id: removeItem.id })
-        return '取消订阅成功！'
+        return `已取消订阅：${removeItem.title}`
       }
       if (options?.removeAll != undefined) {
         // debug(`removeAll:${rssList.length}`)
