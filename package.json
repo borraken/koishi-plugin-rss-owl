@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-rss-owl",
   "description": "",
-  "version": "4.3.3",
+  "version": "4.3.12",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "contributors": [],
@@ -15,8 +15,7 @@
   "koishi": {
     "description": {
       "zh": "练习用的rss订阅器,支持合并转发/puppeteer等功能,求求你别出bug"
-    },
-    "preview": true
+    }
   },
   "license": "MIT",
   "keywords": [

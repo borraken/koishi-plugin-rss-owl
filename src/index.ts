@@ -65,6 +65,7 @@ interface MsgConfig {
   keywordFilter?: Array<string>
   keywordBlock?: Array<string>
   rssHubUrl?:string
+  readCDATA?:boolean
 }
 
 interface proxyAgent {
@@ -107,7 +108,7 @@ export interface rssArg {
   block?: Array<string>
   // customUrlEnable?: boolean
 
-
+  readCDATA?:boolean
 
   split?:number
 
@@ -118,7 +119,7 @@ const templateList = ['content', 'only text', 'only image', 'only video', 'proto
 
 export const Config = Schema.object({
   basic: Schema.object({
-    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` 基础图文模板，图片过多时可能出现问题，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` puppeteer模板，包含title等信息<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` 自定义puppeteer模板，见下方模板设置<br>\`link\` puppeteer模板，截图description中首个a标签网站<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
+    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` ★ 基础图文模板，适用于内容较少的订阅，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` ★ puppeteer模板，适用于大部分订阅<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` ★ 在default模板基础上添加了护眼的背景色及订阅信息，见下方模板设置<br>\`link\` 特殊puppeteer模板，截图内容中首个a标签网址的页面<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
       .default('content'),
     timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
     refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
@@ -133,9 +134,9 @@ export const Config = Schema.object({
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
   }).description('基础设置'),
   template: Schema.object({
-    bodyWidth: Schema.number().description('puppeteer图片的宽度(px)，较低的值可能导致排版错误，仅在内置模板生效').default(600),
+    bodyWidth: Schema.number().description('puppeteer图片的宽度(px)，较低的值可能导致排版错误，仅在非custom的puppeteer模板生效').default(600),
     bodyPadding: Schema.number().description('puppeteer图片的内边距(px)，仅在内置模板生效').default(20),
-    custom: Schema.string().role('textarea', { rows: [4, 2] }).default(`<body style="width:400px;padding:20px;background:#F5ECCD;">
+    custom: Schema.string().role('textarea', { rows: [4, 2] }).default(`<body style="width:600px;padding:20px;background:#F5ECCD;">
       <div style="display: flex;flex-direction: column;">
           <div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);display: flex;align-items: center;flex-direction: column;border-radius: 10px;border: solid;overflow:hidden">
               <div style="display: flex;align-items: center;">
@@ -147,7 +148,7 @@ export const Config = Schema.object({
           <div style="font-weight: bold;">{{title}}:{{pubDate}}</div>
           <div style="">{{description}}</div>
       </div>
-  </body>`).description('custom的内容，需要puppeteer'),
+  </body>`).description('custom模板的内容，使用插值载入推送内容'),
   }).description('模板设置'),
   net: Schema.object({
     proxyAgent: Schema.intersect([
@@ -170,9 +171,10 @@ export const Config = Schema.object({
     userAgent: Schema.string(),
   }).description('网络设置'),
   msg: Schema.object({
-    rssHubUrl:Schema.string().role('link').description('使用快速订阅时rssHub的地址').default('https://rsshub.app'),
-    keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default(['nsfw']),
-    keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default(['^nsfw$']),
+    rssHubUrl:Schema.string().role('link').description('使用快速订阅时rssHub的地址，你可以使用`rsso -q`检查可用的快速订阅').default('https://hub.slarker.me'),
+    keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default([]),
+    keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default([]),
+    // readCDATA: Schema.boolean().description('读取CDATA中内容，CDATA本意是需要被XML解析器忽略的内容，但部分订阅会将有效内容放入，除非必须，否则不建议开启，建议在订阅时使用`-a CDATA:true`以局部启用，开启后可能导致非预期的错误').default(false).experimental(),
     censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   }).description('消息处理'),
   // customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
@@ -249,7 +251,7 @@ export function apply(ctx: Context, config: Config) {
     if(config.basic.videoMode == "href"){
       return src
     }else{
-      res = await $http(src, arg, { responseType: 'arraybuffer' })
+      res = await $http(src, {...arg,timeout:0}, { responseType: 'arraybuffer' })
       let prefix = res.headers["content-type"] 
       let base64Prefix = `data:${prefix};base64,`
       let base64Data = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
@@ -341,7 +343,7 @@ export function apply(ctx: Context, config: Config) {
       await sleep(1000)
     }
     requestRunning++
-    let requestConfig = { timeout: arg.timeout * 1000 }
+    let requestConfig = { timeout: (arg.timeout||0) * 1000 }
     // console.log(arg);
     // debug("http")
     let proxy = {}
@@ -414,12 +416,15 @@ export function apply(ctx: Context, config: Config) {
     let imgData = await Promise.all(Array.from({length:split},async(v,i)=>await page.screenshot({type:"png",clip:{x,y:reduceY(i)+y,width,height:reduceHeight(i)}})))
     return imgData.map(i=>h.image(i,'image/png')).join("")
   }
-  const getRssData = async (url, config) => {
+  const getRssData = async (url, config:rssArg) => {
     // let rssXML = await fetch(url)
     // let rssText = await rssXML.text()
     // let rssJson = x2js.xml2js(rssText)
     // console.log(rssXML);
     let res = (await $http(url, config)).data
+    if(config.readCDATA){
+      res = res.replace(/<!\[CDATA\[(.+?)\]\]>/g,i=>i.match(/^<!\[CDATA\[(.*)\]\]>$/)[1])
+    }
     let rssJson = x2js.xml2js(res)
     debug(rssJson);
     rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
@@ -427,11 +432,12 @@ export function apply(ctx: Context, config: Config) {
     return rssItemList
   }
   const parseRssItem = async (item: any, arg: rssArg, authorId: string | number) => {
-    // debug(arg);
+    debug(arg);
     // let messageItem = Object.assign({}, ...arg.rssItem.map(key => ({ [key]: item[key.split(":")[0]] ?? "" })))
     let template = arg.template
     let msg: string = ""
     let html
+    let videoList = []
     let description: string = item.description?.join?.('') || item.description
     //block
     arg.block?.forEach(blockWord => description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill("*").join("")))
@@ -458,7 +464,8 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.xml())
         msg = await puppeteerToFile(msg)
       }
-      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
       
     } else if (template == "content") {
       // debug("content");
@@ -477,7 +484,8 @@ export function apply(ctx: Context, config: Config) {
         return `<img src="${imgBufferList[src]}"/>`
       })
       msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
-      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "only text") {
       html = cheerio.load(description)
       msg = html.text()
@@ -487,7 +495,8 @@ export function apply(ctx: Context, config: Config) {
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
     } else if (template == "only video") {
       html = cheerio.load(description)
-      msg = (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
@@ -507,7 +516,8 @@ export function apply(ctx: Context, config: Config) {
         msg = await puppeteerToFile(msg)
       }
       if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
-      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "only description") {
       // debug("only description");
       description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
@@ -524,7 +534,8 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.xml())
         msg = await puppeteerToFile(msg)
       }
-      msg += (await Promise.all(html('video').map(async(v,i)=>await getVideoUrl(i.attribs.src,arg,true,i)))).map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "link") {
       // debug("only description");
       html = cheerio.load(description)
@@ -545,6 +556,7 @@ export function apply(ctx: Context, config: Config) {
       }
     }
     // msg = pushVideo(msg, html)
+    debug("msg");
     debug(msg);
     if (config.msg.censor) {
       return `<censor>${msg}</censor>`
@@ -569,7 +581,14 @@ export function apply(ctx: Context, config: Config) {
             .map(i=>parseQuickUrl(i))
             .map(async url => await getRssData(url, arg)))).flat(1)
           let itemArray = rssItemList.sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-            .filter(item => !arg?.filter?.find(keyword => new RegExp(keyword, 'im').test(item.title) || new RegExp(keyword, 'im').test(item.description)))
+            .filter(item => !arg.filter?.some(keyword => {
+              let isFilter = new RegExp(keyword, 'im').test(item.title) || new RegExp(keyword, 'im').test(item.description)
+              if(isFilter){
+                debug(`filter:${keyword}`)
+                debug(item)
+                return true
+              }else{return false}
+            }))
   
           if (arg.reverse) {
             itemArray = itemArray.reverse()
@@ -602,7 +621,7 @@ export function apply(ctx: Context, config: Config) {
           } else if (config.basic.merge == "有多条更新时合并") {
             message = messageList.length > 1 ? `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>` : messageList.join("")
           }
-          ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message)
+          debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message))
           await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate })
         } catch (error) {
           logger.error(`更新失败:${JSON.stringify(rssItem)}`)
@@ -617,8 +636,8 @@ export function apply(ctx: Context, config: Config) {
   const formatArg = (options): rssArg => {
     let { arg, template, daily } = options
     let json = Object.assign({}, ...(arg?.split(',')?.map(i => ({ [i.split(":")[0]]: i.split(":")[1] })) || []))
-    let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "custom", "proxyAgent", "auth", "filter", "block"]
-    let booleanKey = ['firstLoad', 'merge']
+    let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "proxyAgent", "auth"]
+    let booleanKey = ['firstLoad', 'merge','CDATA']
     let numberKey = ['forceLength', "timeout",'refresh','maxRssItem','bodyWidth','bodyPadding']
     let falseContent = ['false', 'null', '']
 
@@ -682,10 +701,13 @@ export function apply(ctx: Context, config: Config) {
     }
     return json
   }
-  const mixinArg = (arg) => ({
-    ...Object.assign({}, ...Object.values(config)),
+  const mixinArg = (arg):rssArg => ({
+    ...Object.assign({}, ...Object.entries(config).map(([key,value])=>typeof value === 'object'?value:{[key]:value})),
     ...arg,
-    template: arg.template || config.basic.defaultTemplate,
+    filter:[...config.msg.keywordFilter,...(arg?.filter||[])],
+    block:[...config.msg.keywordBlock,...(arg?.block||[])],
+    // readCDATA: arg.CDATA??config.msg.readCDATA,
+    template: arg.template ?? config.basic.defaultTemplate,
     proxyAgent: arg.proxyAgent ? (arg.proxyAgent.enabled ? arg.proxyAgent : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
   })
   ctx.on('ready', async () => {
@@ -722,6 +744,7 @@ export function apply(ctx: Context, config: Config) {
       // debug("init")
       // debug(options)
       // debug(session)
+      
       const { id: guildId } = session.event.guild as any
       const { platform } = session.event as any
       const { id: author } = session.event.user as any
@@ -753,7 +776,7 @@ export function apply(ctx: Context, config: Config) {
         if (item == -1) {
           return `未找到${options.pull}`
         }
-        debug(`pull:${item}`)
+        debug(`pull:${item.title}`)
         let { url, author, arg } = item
         arg = mixinArg(arg)
         //
