@@ -36,7 +36,7 @@ interface Config {
 }
 
 interface BasicConfig {
-  defaultTemplate?: 'content' | 'only text' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
+  defaultTemplate?: 'content' | 'only text' | 'only media' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   timeout?: number
   refresh?: number
   merge?: '不合并' | '有多条更新时合并' | '一直合并'
@@ -53,6 +53,8 @@ interface BasicConfig {
 interface TemplateConfig {
   bodyWidth?: number
   bodyPadding?: number
+  bodyFontSize?: number
+  content?: string
   custom?: string
 }
 
@@ -90,7 +92,7 @@ export interface rss {
   lastPubDate: number
 }
 export interface rssArg {
-  template?: 'content' | 'only text' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
+  template?: 'content' | 'only text' | 'only media' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   content: string | never
 
   forceLength?: number
@@ -115,11 +117,11 @@ export interface rssArg {
   nextUpdataTime?: number
 }
 // export const usage = ``
-const templateList = ['content', 'only text', 'only image', 'only video', 'proto', 'default', 'only description', 'custom','link']
+const templateList = ['content', 'only text', 'only media','only image', 'only video', 'proto', 'default', 'only description', 'custom','link']
 
 export const Config = Schema.object({
   basic: Schema.object({
-    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` ★ 基础图文模板，适用于内容较少的订阅，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` ★ puppeteer模板，适用于大部分订阅<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` ★ 在default模板基础上添加了护眼的背景色及订阅信息，见下方模板设置<br>\`link\` 特殊puppeteer模板，截图内容中首个a标签网址的页面<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
+    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` ★ 可自定义的基础模板，适用于内容较少的订阅，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only media\` 仅推送图片和视频，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` ★ puppeteer模板，适用于大部分订阅<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` ★ 在default模板基础上添加了护眼的背景色及订阅信息，见下方模板设置<br>\`link\` 特殊puppeteer模板，截图内容中首个a标签网址的页面<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
       .default('content'),
     timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
     refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
@@ -134,8 +136,10 @@ export const Config = Schema.object({
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
   }).description('基础设置'),
   template: Schema.object({
-    bodyWidth: Schema.number().description('puppeteer图片的宽度(px)，较低的值可能导致排版错误，仅在非custom的puppeteer模板生效').default(600),
-    bodyPadding: Schema.number().description('puppeteer图片的内边距(px)，仅在内置模板生效').default(20),
+    bodyWidth: Schema.number().description('puppeteer图片的宽度(px)，较低的值可能导致排版错误，仅在非custom的模板生效').default(600),
+    bodyPadding: Schema.number().description('puppeteer图片的内边距(px)仅在非custom的模板生效').default(20),
+    bodyFontSize: Schema.number().description('puppeteer图片的字号(px)，0为默认值，仅在非custom的模板生效').default(0),
+    content: Schema.string().role('textarea', { rows: [4, 2] }).default(`《{{title}}》\n{{description}}`).description('content模板的内容，使用插值载入推送内容'),
     custom: Schema.string().role('textarea', { rows: [4, 2] }).default(`<body style="width:600px;padding:20px;background:#F5ECCD;">
       <div style="display: flex;flex-direction: column;">
           <div style="backdrop-filter: blur(5px) brightness(0.7) grayscale(0.1);display: flex;align-items: center;flex-direction: column;border-radius: 10px;border: solid;overflow:hidden">
@@ -145,8 +149,9 @@ export const Config = Schema.object({
               </div>
               <p style="color: white;font-size: 16px;">{{rss.channel.description}}</p>
           </div>
-          <div style="font-weight: bold;">{{title}}:{{pubDate}}</div>
-          <div style="">{{description}}</div>
+          <div style="font-weight: bold;">{{title}}</div>
+          <div>{{pubDate}}</div>
+          <div>{{description}}</div>
       </div>
   </body>`).description('custom模板的内容，使用插值载入推送内容'),
   }).description('模板设置'),
@@ -202,30 +207,14 @@ export function apply(ctx: Context, config: Config) {
     autoInc: true
   }
   )
-  const getDefaultTemplate = (bodyWidth, bodyPadding) => `<body style="width:${bodyWidth || config.template.bodyWidth}px;padding:${bodyPadding || config.template.bodyPadding}px"><h3>{{title}}</h3><h5>{{pubDate}}</h5><br><div>{{description}}<div></body>`
-  const getDescriptionTemplate = (bodyWidth, bodyPadding) => `<body style="width:${bodyWidth || config.template.bodyWidth}px;padding:${bodyPadding || config.template.bodyPadding}px">{{description}}</body>`
+  const getDefaultTemplate = (bodyWidth, bodyPadding,bodyFontSize:number|undefined) => 
+    `<body><h3>{{title}}</h3><h5>{{pubDate}}</h5><br><div>{{description}}<div></body>
+    <style>*{${bodyFontSize?`font-size: ${bodyFontSize}px !important;`:''}body{width:${bodyWidth || config.template.bodyWidth}px;padding:${bodyPadding || config.template.bodyPadding}px;}}</style>`
+  const getDescriptionTemplate = (bodyWidth, bodyPadding,bodyFontSize:number|undefined) => 
+    `<body>{{description}}</body>
+    <style>*{${bodyFontSize?`font-size: ${bodyFontSize}px !important;`:''}body{width:${bodyWidth || config.template.bodyWidth}px;padding:${bodyPadding || config.template.bodyPadding}px;}}</style>`
   let interval
   const debug = (message) => config.debug && logger.info(message)
-
-  //   async function sendMessageToChannel(ctx, guild, broadMessage) {
-  //     const targetChannels = await ctx.database.get("channel", guild);
-  //     debug("sendMessageToChannel")
-  //     debug(guild)
-  //     debug(targetChannels)
-  //     if (targetChannels.length === 1) {
-  //         const bot = ctx.bots.find((bot) => bot.userId === targetChannels[0].assignee);
-  //         if (bot) {
-  //             await bot.sendMessage(guild.guildId, broadMessage);
-  //         } else {
-  //             throw new Error("指定的bot未找到。");
-  //         }
-  //     } else if (targetChannels.length > 1) {
-  //         throw new Error("有复数个bot存在于该群组/频道，请移除多余bot。");
-  //     } else {
-  //         throw new Error("未找到目标群组/频道。");
-  //     }
-  // }
-  // const __dirname = './cache'
   const getImageUrl = async (url, arg,useBase64Mode=false) => {
     let res
     res = await $http(url, arg, { responseType: 'arraybuffer' })
@@ -273,8 +262,8 @@ export function apply(ctx: Context, config: Config) {
   }
   const quickList = [
     {prefix:"rss",name:"rsshub通用订阅",detail:"rsshub通用快速订阅，用于快速写入及通过配置动态更换rsshub地址",explain:"rss:param1/param2/...",example:"rss:apnews/rss/business",argLength:[1,9],replace:"$1$2$3$4$5$6$7$8$9"},
-    {prefix:"tg",name:"电报频道",detail:"输入电报频道信息中的链接地址最后部分",explain:"tg:[:channel_name]",example:"tg:woshadiao",argLength:[1,1],replace:"/telegram/channel$1"},
-    {prefix:"mp-tag",name:"微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，点入 Tag 的链接如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入__biz和album_id",explain:"mp-tag:[:__biz]/[:album_id]",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",argLength:[2,2],replace:"/wechat/mp/msgalbum$1$2"},
+    {prefix:"tg",name:"电报频道",detail:"输入电报频道信息中的链接地址最后部分，部分不提供网页预览的频道无法订阅",explain:"tg:[:channel_name]",example:"tg:woshadiao",argLength:[1,1],replace:"/telegram/channel$1"},
+    {prefix:"mp-tag",name:"微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，浏览器打开Tag文章列表，如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入__biz和album_id",explain:"mp-tag:[:__biz]/[:album_id]",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",argLength:[2,2],replace:"/wechat/mp/msgalbum$1$2"},
     {prefix:"gh",name:"github相关",detail:"Repo Issue:gh:issue/[:user]/[:repo]/[:state?(open|closed|all)]/[:labels?(open|bug|...)]\nRepo Stars:gh:stars/[:user]/[:repo]\nTrending:gh:trending/[:since(daliy|weekly|monthly)]/[:language?(javascript|c#|c++|...)]/[:spoken_language?(English|Chinese|...)]\nUser Activities:gh:activity/[:user]",explain:"gh:[type]/[param1]/[param2]...",example:"gh:issue/koishijs/koishi/open",argLength:[2,5],replace:"/github$1$2$3$4$5"},
   ]
   const parseQuickUrl = (url)=>{
@@ -459,9 +448,9 @@ export function apply(ctx: Context, config: Config) {
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
       if(config.basic.imageMode=='base64'){
-        msg = (await renderHtml2Image(html.xml())).toString()
+        msg = (await renderHtml2Image(html.html())).toString()
       }else if(config.basic.imageMode=='File'){
-        msg = await ctx.puppeteer.render(html.xml())
+        msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
       await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
@@ -479,16 +468,25 @@ export function apply(ctx: Context, config: Config) {
       // imgList = await Promise.all(imgList.map(async ([key,i])=>({[key]:await getImageUrl(i, arg)}))) 
       html('img').replaceWith((key, Dom) => `<p>$img{{${imgList[key]}}}</p>`)
       msg = html.text()
-      msg = msg.replace(/\$img\{\{(.*?)\}\}/g, match => {
+      item.description = msg.replace(/\$img\{\{(.*?)\}\}/g, match => {
         let src = match.match(/\$img\{\{(.*?)\}\}/)[1]
         return `<img src="${imgBufferList[src]}"/>`
       })
-      msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
+      
+      msg = config.template.content.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      logger.info(msg)
+      // msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
       await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
       msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "only text") {
       html = cheerio.load(description)
       msg = html.text()
+    } else if (template == "only media") {
+      html = cheerio.load(description)
+      let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
+      msg = imgList.map(img => `<img src="${img}"/>`).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "only image") {
       html = cheerio.load(description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
@@ -501,7 +499,7 @@ export function apply(ctx: Context, config: Config) {
       msg = description
     } else if (template == "default") {
       debug("default");
-      description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
       debug(description);
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -510,9 +508,9 @@ export function apply(ctx: Context, config: Config) {
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
       if(config.basic.imageMode=='base64'){
-        msg = (await renderHtml2Image(html.xml())).toString()
+        msg = (await renderHtml2Image(html.html())).toString()
       }else if(config.basic.imageMode=='File'){
-        msg = await ctx.puppeteer.render(html.xml())
+        msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
       if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
@@ -520,7 +518,7 @@ export function apply(ctx: Context, config: Config) {
       msg += videoList.map(src=>h.video(src)).join("")
     } else if (template == "only description") {
       // debug("only description");
-      description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
       // debug(description);
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -529,9 +527,9 @@ export function apply(ctx: Context, config: Config) {
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
       if(config.basic.imageMode=='base64'){
-        msg = (await renderHtml2Image(html.xml())).toString()
+        msg = (await renderHtml2Image(html.html())).toString()
       }else if(config.basic.imageMode=='File'){
-        msg = await ctx.puppeteer.render(html.xml())
+        msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
       await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
@@ -637,7 +635,7 @@ export function apply(ctx: Context, config: Config) {
     let { arg, template, daily } = options
     let json = Object.assign({}, ...(arg?.split(',')?.map(i => ({ [i.split(":")[0]]: i.split(":")[1] })) || []))
     let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "proxyAgent", "auth"]
-    let booleanKey = ['firstLoad', 'merge','CDATA']
+    let booleanKey = ['firstLoad',"reverse", 'merge']
     let numberKey = ['forceLength', "timeout",'refresh','maxRssItem','bodyWidth','bodyPadding']
     let falseContent = ['false', 'null', '']
 

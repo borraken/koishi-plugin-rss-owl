@@ -22,12 +22,16 @@ rsso rss:douban/group/648102
 
 //(以下链接可能需要配置proxy才能显示完整内容)
 //telegram每日沙雕墙
+//rsshub的tg频道订阅中不会收录被标记为NSFW的内容
+//订阅每日沙雕墙频道时建议在关键字过滤中添加 `nsfw` 以过滤掉NSFW提前警告信息
 rsso https://hub.slarker.me/telegram/channel/woshadiao
 rsso tg:woshadiao
 //telegram rvalue的生草日常
-rsso https://hub.slarker.me/telegram/channel/rvalue_daily
 rsso tg:rvalue_daily
-//koishi issue
+//telegram PIXIV站每日 Top50搬运
+//订阅此频道时建议在关键字过滤中添加 `互推` 以过滤频道推广信息
+rsso tg:pixiv_top50
+//github koishi issue
 rsso gh:issue/koishijs/koishi
 //阮一峰的网络日志
 rsso http://feeds.feedburner.com/ruanyifeng
@@ -94,6 +98,7 @@ rsso -d 10:00 <url>
 - [x] 稳定使用
 - [x] 快速订阅功能
 - [x] 视频本地转发功能
+- [ ] 订阅详情查询
 - [ ] 对返回磁链的订阅自动下载压缩发送
 
 ## 致谢:
