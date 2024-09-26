@@ -9,13 +9,14 @@ rss-owl 是一个基于[koishi](https://koishi.chat/manual/starter/)的RSS订阅
 ### 1. 基本使用
 ```
 //对于rsshub订阅，可以使用快速链接以方便写入订阅和随时切换rsshub实例地址
+//示例使用了-i选项以设置消息模板，你可以根据需要删除或更改模板，但要注意部分模板需要puppeteer，模板说明见插件配置
 //快速链接的列表及使用方法通过 rsso -q 查询
 //每天60s早报
-rsso https://hub.slarker.me/qqorw
+rsso -i default https://hub.slarker.me/qqorw
 rsso rss:qqorw
 //微信公众号话题tag 看理想|李想主义 
-rsso https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361
-rsso mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361
+rsso -i custom https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361
+rsso -i custom mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361
 //豆瓣小组-可爱事物分享
 rsso https://hub.slarker.me/douban/group/648102
 rsso rss:douban/group/648102
@@ -24,17 +25,17 @@ rsso rss:douban/group/648102
 //telegram每日沙雕墙
 //rsshub的tg频道订阅中不会收录被标记为NSFW的内容
 //订阅每日沙雕墙频道时建议在关键字过滤中添加 `nsfw` 以过滤掉NSFW提前警告信息
-rsso https://hub.slarker.me/telegram/channel/woshadiao
-rsso tg:woshadiao
+rsso -i content https://hub.slarker.me/telegram/channel/woshadiao
+rsso -i content tg:woshadiao
 //telegram rvalue的生草日常
-rsso tg:rvalue_daily
+rsso -i content tg:rvalue_daily
 //telegram PIXIV站每日 Top50搬运
 //订阅此频道时建议在关键字过滤中添加 `互推` 以过滤频道推广信息
-rsso tg:pixiv_top50
+rsso -i content tg:pixiv_top50
 //github koishi issue
-rsso gh:issue/koishijs/koishi
+rsso -i content gh:issue/koishijs/koishi
 //阮一峰的网络日志
-rsso http://feeds.feedburner.com/ruanyifeng
+rsso -i custom http://feeds.feedburner.com/ruanyifeng
 
 //链接组可以将多个链接的推送合并，方便管理，订阅时最好同时提供订阅名称以方便查询
 rsso -t 订阅组名称 <url>|<url>|<url>...
@@ -47,7 +48,7 @@ rsso -t 订阅组名称 <url>|<url>|<url>...
 
 部分博客或论坛等网站也会主动提供RSS订阅链接，但本插件暂不支持旧版RSS格式
 
-部分订阅不提供pubDate，导致插件无法判断，你需要使用 --daily 或refresh,forceLength 以在固定时间获取固定数量的更新，或者用 -p 随时取用最新的更新
+部分订阅不提供pubDate，导致无法判断，你需要使用 --daily 或refresh,forceLength 以在固定时间获取固定数量的更新，或者用 -p 随时拉取最新的更新
 
 
 
