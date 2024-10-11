@@ -36,6 +36,7 @@ interface Config {
 }
 
 interface BasicConfig {
+  usePoster: boolean;
   defaultTemplate?: 'content' | 'only text' | 'only media' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   timeout?: number
   refresh?: number
@@ -131,6 +132,7 @@ export const Config = Schema.object({
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
+    usePoster: Schema.boolean().default(false).description('加载视频封面').experimental(),
     autoSplitImage: Schema.boolean().description('自动垂直拆分大尺寸图片以避免发送限制').default(true),
     cacheDir: Schema.string().description('File模式时使用的缓存路径').default('data/cache/rssOwl'),
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
@@ -216,6 +218,7 @@ export function apply(ctx: Context, config: Config) {
   let interval
   const debug = (message) => config.debug && logger.info(message)
   const getImageUrl = async (url, arg,useBase64Mode=false) => {
+    // debug('imgUrl:'+url)
     let res
     res = await $http(url, arg, { responseType: 'arraybuffer' })
     debug(res.data)
@@ -439,7 +442,7 @@ export function apply(ctx: Context, config: Config) {
     }
     if (template == "custom") {
       debug("custom");
-      description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
       // debug(description);
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -453,8 +456,8 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
       
     } else if (template == "content") {
       // debug("content");
@@ -472,12 +475,15 @@ export function apply(ctx: Context, config: Config) {
         let src = match.match(/\$img\{\{(.*?)\}\}/)[1]
         return `<img src="${imgBufferList[src]}"/>`
       })
-      
-      msg = config.template.content.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      msg = config.template.content.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
       logger.info(msg)
       // msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      // msg += videoList.map(src=>h.video(src)).join("")
+      
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
+      msg+=videoList.map(([src,poster])=>h('img',{src:poster})).join("")
     } else if (template == "only text") {
       html = cheerio.load(description)
       msg = html.text()
@@ -485,21 +491,26 @@ export function apply(ctx: Context, config: Config) {
       html = cheerio.load(description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      // msg += videoList.map(src=>h.video(src)).join("")
+
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only image") {
       html = cheerio.load(description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
     } else if (template == "only video") {
       html = cheerio.load(description)
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      // msg += videoList.map(src=>h.video(src,{poster:``})).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
       debug("default");
-      description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
       debug(description);
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -514,11 +525,13 @@ export function apply(ctx: Context, config: Config) {
         msg = await puppeteerToFile(msg)
       }
       if(config.basic.imageMode=='File')msg = await puppeteerToFile(msg)
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      // msg += videoList.map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only description") {
       // debug("only description");
-      description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString() : t?.[v] || "", item))
+      description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
       // debug(description);
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -532,8 +545,10 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
-      await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      msg += videoList.map(src=>h.video(src)).join("")
+      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
+      // msg += videoList.map(src=>h.video(src)).join("")
+      await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
+      msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "link") {
       // debug("only description");
       html = cheerio.load(description)
@@ -725,7 +740,7 @@ export function apply(ctx: Context, config: Config) {
     .command('rssowl <url:text>', '订阅 RSS 链接')
     .alias('rsso')
     .usage('https://github.com/borraken/koishi-plugin-rss-owl')
-    .option('list', '-l 查看订阅列表')
+    .option('list', '-l [content] 查看订阅列表(详情)')
     .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
     .option('removeAll', '全部删除订阅')
     .option('arg', '-a <content> 自定义配置')
@@ -740,7 +755,7 @@ export function apply(ctx: Context, config: Config) {
     .example('rsso https://hub.slarker.me/qqorw')
     .action(async ({ session, options }, url) => {
       // debug("init")
-      // debug(options)
+      debug(options)
       // debug(session)
       
       const { id: guildId } = session.event.guild as any
@@ -754,16 +769,23 @@ export function apply(ctx: Context, config: Config) {
         let correntQuickObj = quickList[parseInt(options?.quick)-1]
         return `${correntQuickObj.name}\n${correntQuickObj.detail}\n${correntQuickObj.explain}\n例:rsso -T ${correntQuickObj.example}`
       }
-      if ((platform.indexOf("sandbox") + 1) && !options.test) {
+      if ((platform.indexOf("sandbox") + 1) && !options.test && url) {
         session.send('沙盒中无法推送更新，但RSS依然会被订阅，建议使用 -T 选项进行测试')
       }
       // session.send(__filename)
       const rssList = await ctx.database.get(('rssOwl' as any), { platform, guildId })
-      if (options.list) {
-        // debug(`list`)
+      
+      if (options?.list==='') {
         if (!rssList.length) return '未订阅任何链接。'
-        return "id:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString()})`).join('\n')
+        return "id:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString('zh-CN')})`).join('\n')
       }
+      if (options?.list) {
+        let rssObj = rssList.find(i=>i.rssId===parseInt(options?.list))||rssList.find(i=>new RegExp(options?.list).test(i.title))
+        if(!rssObj)return '未找到订阅。请输入"rsso -l"查询列表或"rsso -l 订阅id"查询订阅详情'
+        return `title:${rssObj.title}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
+      }
+
+
       // debug(rssList)
       if (options.pull) {
         // debug(`pull:${options.pull}`)
@@ -858,7 +880,7 @@ export function apply(ctx: Context, config: Config) {
         author,
         rssId: (+rssList.slice(-1)?.[0]?.rssId || 0) + 1,
         arg: optionArg,
-        title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString()}`) || "",
+        title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
         lastPubDate: getLastPubDate()
       }
       // debug(subscribe);

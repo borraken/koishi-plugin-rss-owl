@@ -7,21 +7,20 @@ rss-owl 是一个基于[koishi](https://koishi.chat/manual/starter/)的RSS订阅
 ## 使用方法
 
 ### 1. 基本使用
+[RSSHub](https://docs.rsshub.app/zh/routes/popular)
 ```
-//对于rsshub订阅，可以使用快速链接以方便写入订阅和随时切换rsshub实例地址
-//示例使用了-i选项以设置消息模板，你可以根据需要删除或更改模板，但要注意部分模板需要puppeteer，模板说明见插件配置
+//对于rsshub订阅，建议使用快速链接以方便写入订阅和随时切换rsshub实例地址
 //快速链接的列表及使用方法通过 rsso -q 查询
+//示例使用了-i选项以设置消息模板，你可以根据需要选择，部分模板需要puppeteer，模板说明见插件配置
 //每天60s早报
 rsso -i default https://hub.slarker.me/qqorw
-rsso rss:qqorw
+rsso -i default rss:qqorw
 //微信公众号话题tag 看理想|李想主义 
-rsso -i custom https://hub.slarker.me/wechat/mp/msgalbum/MzA3MDM3NjE5NQ==/1375870284640911361
 rsso -i custom mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361
 //豆瓣小组-可爱事物分享
-rsso https://hub.slarker.me/douban/group/648102
 rsso rss:douban/group/648102
 
-//(以下链接可能需要配置proxy才能显示完整内容)
+//以下链接可能需要配置proxy才能显示完整内容
 //telegram每日沙雕墙
 //rsshub的tg频道订阅中不会收录被标记为NSFW的内容
 //订阅每日沙雕墙频道时建议在关键字过滤中添加 `nsfw` 以过滤掉NSFW提前警告信息
@@ -99,7 +98,8 @@ rsso -d 10:00 <url>
 - [x] 稳定使用
 - [x] 快速订阅功能
 - [x] 视频本地转发功能
-- [ ] 订阅详情查询
+- [x] 订阅详情查询
+- [ ] auto模板
 - [ ] 对返回磁链的订阅自动下载压缩发送
 
 ## 致谢:
