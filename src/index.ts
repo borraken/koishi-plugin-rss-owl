@@ -130,6 +130,7 @@ export const Config = Schema.object({
     maxRssItem: Schema.number().description('限制更新时的最大推送数量上限，超出上限时较早的更新会被忽略').default(10),
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
+    // sendRequire: Schema.boolean().default(true).description('验证发送').experimental(),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
     usePoster: Schema.boolean().default(false).description('加载视频封面').experimental(),
@@ -777,12 +778,13 @@ export function apply(ctx: Context, config: Config) {
       
       if (options?.list==='') {
         if (!rssList.length) return '未订阅任何链接。'
-        return "id:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString('zh-CN')})`).join('\n')
+        return "使用'rsso -l [id]'以查询详情 \nid:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString('zh-CN')})`).join('\n')
       }
       if (options?.list) {
         let rssObj = rssList.find(i=>i.rssId===parseInt(options?.list))||rssList.find(i=>new RegExp(options?.list).test(i.title))
         if(!rssObj)return '未找到订阅。请输入"rsso -l"查询列表或"rsso -l 订阅id"查询订阅详情'
-        return `title:${rssObj.title}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
+        return `title:${rssObj.title}\nUrl:${rssObj.url.split("|")
+          .map(i=>`${parseQuickUrl(i)}${i==parseQuickUrl(i)?'':`(${i})`}`).join("|")}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
       }
 
 
