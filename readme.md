@@ -19,6 +19,8 @@ rsso -i default rss:qqorw
 rsso -i custom mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361
 //豆瓣小组-可爱事物分享
 rsso rss:douban/group/648102
+//阮一峰的网络日志
+rsso -i custom https://www.ruanyifeng.com/blog/atom.xml
 
 //以下链接可能需要配置proxy才能显示完整内容
 //telegram每日沙雕墙
@@ -33,8 +35,10 @@ rsso -i content tg:rvalue_daily
 rsso -i content tg:pixiv_top50
 //github koishi issue
 rsso -i content gh:issue/koishijs/koishi
-//阮一峰的网络日志
-rsso -i custom http://feeds.feedburner.com/ruanyifeng
+//github react releases
+//官方订阅源，无法使用快速链接
+//https://docs.rsshub.app/zh/routes/programming#github
+https://github.com/facebook/react/releases.atom
 
 //链接组可以将多个链接的推送合并，方便管理，订阅时最好同时提供订阅名称以方便查询
 rsso -t 订阅组名称 <url>|<url>|<url>...
@@ -108,3 +112,6 @@ rsso -d 10:00 <url>
 - [koishi-plugin-rss](https://github.com/koishijs/koishi-plugin-rss)
 - [koishi-plugin-rss-discourse](https://github.com/MirrorCY/koishi-plugin-rss)
 - [koishi-plugin-rss-cat](https://github.com/jexjws/koishi-plugin-rss-cat)
+
+## 化缘
+- [ifdian](https://ifdian.net/setting/plan)
