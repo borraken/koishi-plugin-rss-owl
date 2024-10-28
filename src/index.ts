@@ -32,8 +32,9 @@ interface Config {
   template?: TemplateConfig
   net?: NetConfig
   msg?: MsgConfig
-  debug?: boolean
+  debug?: "disable"|"error"|"info"|"details"
 }
+const debugLevel = ["disable","error","info","details"]
 
 interface BasicConfig {
   usePoster: boolean;
@@ -186,7 +187,7 @@ export const Config = Schema.object({
     censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   }).description('消息处理'),
   // customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
-  debug: Schema.boolean().description('调试开关').default(false),
+  debug: Schema.union(debugLevel).default(debugLevel[0]),
 })
 
 export function apply(ctx: Context, config: Config) {
@@ -217,12 +218,18 @@ export function apply(ctx: Context, config: Config) {
     `<body>{{description}}</body>
     <style>*{${bodyFontSize?`font-size: ${bodyFontSize}px !important;`:''}body{width:${bodyWidth || config.template.bodyWidth}px;padding:${bodyPadding || config.template.bodyPadding}px;}}</style>`
   let interval
-  const debug = (message) => config.debug && logger.info(message)
+  const debug = (message,name='',type:"disable"|"error"|"info"|"details"='details') =>{
+    const typeLevel = debugLevel.findIndex(i=>i==type)
+    if(typeLevel<1)return
+    if(typeLevel > debugLevel.findIndex(i=>i==config.debug))return
+    if(name)logger.info(`${type}:<<${name}>>`)
+    logger.info(message)
+  }
   const getImageUrl = async (url, arg,useBase64Mode=false) => {
-    // debug('imgUrl:'+url)
+    debug('imgUrl:'+url,'','details')
     let res
     res = await $http(url, arg, { responseType: 'arraybuffer' })
-    debug(res.data)
+    debug(res.data,'img response','details')
     let prefixList = ['png', 'jpeg', 'webp']
     let prefix = res.headers["content-type"] || ('image/' + (prefixList.find(i => new RegExp(i).test(url)) || 'jpeg'))
     let base64Prefix = `data:${prefix};base64,`
@@ -238,7 +245,6 @@ export function apply(ctx: Context, config: Config) {
     // let file = new File([res.data], "name");
   }
   const getVideoUrl = async (url, arg,useBase64Mode=false,dom) => {
-    debug(dom.children);
     let src = dom.attribs.src || dom.children["0"].attribs.src
     let res
     if(config.basic.videoMode == "href"){
@@ -261,7 +267,7 @@ export function apply(ctx: Context, config: Config) {
     const buffer = Buffer.from(base64.substring(base64.indexOf(',') + 1), 'base64');
     // console.log("Byte length: " + buffer.length);
     const MB = buffer.length / 1e+6
-    debug("MB: " + MB);
+    debug("MB: " + MB,'file size','details');
     return `<file src="${await writeCacheFile(base64)}"/>`
   }
   const quickList = [
@@ -281,7 +287,7 @@ export function apply(ctx: Context, config: Config) {
       let index = +(v.match(/\$(.*)/)[1])-1
       return params[index]?`/${params[index]}`:""
     })
-    debug(config.msg.rssHubUrl + rUrl)
+    debug(config.msg.rssHubUrl + rUrl,'quickUrl return','details')
     return config.msg.rssHubUrl + rUrl
   }
   const getCacheDir = () => {
@@ -303,7 +309,7 @@ export function apply(ctx: Context, config: Config) {
   }
   const writeCacheFile = async (fileUrl: string) => {
     const cacheDir = getCacheDir()
-    debug(cacheDir)
+    debug(cacheDir,'cacheDir','details')
     let fileList = fs.readdirSync(cacheDir)
     let suffix = /(?<=^data:.+?\/).+?(?=;base64)/.exec(fileUrl)[0]
     let fileName = `${parseInt((Math.random() * 10000000).toString()).toString()}.${suffix}`
@@ -312,7 +318,7 @@ export function apply(ctx: Context, config: Config) {
     }
     let base64Data = fileUrl.replace(/^data:.+?;base64,/, "");
     let path = `${cacheDir}/${fileName}`
-    debug(path);
+    debug(path,'path','details')
 
     fs.writeFileSync(path, base64Data, 'base64')
     if (config.basic.replaceDir) {
@@ -337,8 +343,6 @@ export function apply(ctx: Context, config: Config) {
     }
     requestRunning++
     let requestConfig = { timeout: (arg.timeout||0) * 1000 }
-    // console.log(arg);
-    // debug("http")
     let proxy = {}
     if (arg?.proxyAgent?.enabled) {
       proxy['proxy'] = {
@@ -356,25 +360,22 @@ export function apply(ctx: Context, config: Config) {
     if (arg.userAgent) {
       requestConfig['header'] = { 'User-Agent': arg.userAgent }
     }
-    // debug(requestConfig);
-    debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`)
+    debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`,'request info','details')
     let res
     let retries = 3
-    // debug({url, arg, config})
     while (retries > 0 && !res) {
       try {
-        if (retries > 1) {
+        if (retries%2) {
           res = await axios.get(url, { ...requestConfig, ...config, ...proxy })
         } else {
-          // debug({ url, ...requestConfig, ...config })
           res = await axios.get(url, { ...requestConfig, ...config })
         }
       } catch (error) {
         retries--
         if (retries <= 0) {
           requestRunning--
-          debug({url, arg, config})
-          debug(error);
+          debug({url, arg, config},'error request info','error')
+          debug(error,'','error');
 
           throw error
         }
@@ -387,15 +388,15 @@ export function apply(ctx: Context, config: Config) {
   const renderHtml2Image = async (htmlContent:string)=>{
     let page = await ctx.puppeteer.page()
     //截图
-    debug(htmlContent)
+    debug(htmlContent,'htmlContent','details')
     await page.setContent(htmlContent)
     if(!config.basic.autoSplitImage)return h.image(await page.screenshot({type:"png"}),'image/png') 
     let [height,width,x,y] = await page.evaluate(()=>[document.body.offsetHeight,document.body.offsetWidth,parseInt(document.defaultView.getComputedStyle(document.body).marginLeft)||0,parseInt(document.defaultView.getComputedStyle(document.body).marginTop)||0])
     let size = 10000
-    debug([height,width,x,y])
+    debug([height,width,x,y],'pptr img size','details')
     const split = Math.ceil(height/size)
     if(!split)return h.image(await page.screenshot({type:"png",clip:{x,y,width,height}}),'image/png')
-    debug({height,width,split})
+    debug({height,width,split},'split img','details')
     const reduceY =(index) =>{
       let y = Math.floor(height/split*index)
       return y
@@ -419,13 +420,58 @@ export function apply(ctx: Context, config: Config) {
       res = res.replace(/<!\[CDATA\[(.+?)\]\]>/g,i=>i.match(/^<!\[CDATA\[(.*)\]\]>$/)[1])
     }
     let rssJson = x2js.xml2js(res)
-    debug(rssJson);
-    rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
-    const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i, rss: rssJson.rss }))
-    return rssItemList
+    debug(rssJson,'rssJson','details');
+    if(rssJson.rss){
+      //rss
+      rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
+      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i, rss: rssJson.rss }))
+      return rssItemList
+    }else if(rssJson.feed){
+      //atom
+      let rss = {channel:{}}
+      let parseContent = (content)=>{
+        if(typeof content =='string')return content
+        if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
+        if(content['__text'])return content['__text']?.join?.("")||content['__text']
+        // debug(content,'未知ATOM订阅的content格式，请联系插件作者更新','info')
+        return Object.values(content).reduce((t:string,v:any)=>{
+          if(v&&(typeof v =='string'||v?.join)){
+            let text:string = v?.join("")||v
+            return text.length > t.length ? text : t
+          }else{return t}
+        },'')
+      }
+      let item = rssJson.feed.entry.map(i=>({
+        ...i,
+        title:i.title,
+        description:parseContent(i.content),
+        link:i.link?.['_href']||i.link?.[0]?.['_href'],
+        guid:i.id,
+        pubDate:i.updated,
+        author:i.author[0]?.name||i.author?.name,
+        // category:i,
+        // comments:i,
+        // enclosure:i,
+        // source:i,
+      }))
+      rss.channel = {
+        title:rssJson.feed.title,
+        link:rssJson.feed.link?.[0]?.href||rssJson.feed.link?.href,
+        description:rssJson.feed.summary,
+        generator:rssJson.feed.generator,
+        // webMaster:undefined,
+        language:rssJson.feed['@xml:lang'],
+        item
+      }
+      item = item.map(i=>({rss,...i}))
+      debug(item,'atom item','details')
+      return item
+    }else{
+      debug(rssJson,'未知rss格式，请提交issue','error')
+    }
   }
   const parseRssItem = async (item: any, arg: rssArg, authorId: string | number) => {
-    debug(arg);
+    debug(arg,'rss arg','details');
     // let messageItem = Object.assign({}, ...arg.rssItem.map(key => ({ [key]: item[key.split(":")[0]] ?? "" })))
     let template = arg.template
     let msg: string = ""
@@ -435,19 +481,17 @@ export function apply(ctx: Context, config: Config) {
     //block
     arg.block?.forEach(blockWord => description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill("*").join("")))
     // const pushVideo = (msg, html) => `${msg}${config.basic.videoFetch ? html('video').map((v, i) => i.attribs.src).map(i => `<video src="${i}"/>`).join() : ''}`
-    // debug(template);
+    debug(template,'template');
     if(config.basic.videoMode==='filter'){
       html = cheerio.load(description)
       html('video').length > 0
       return ''
     }
     if (template == "custom") {
-      debug("custom");
       description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
-      // debug(description);
+      debug(description,'description');
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
-        debug("puppeteer:proxyAgent");
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
@@ -461,14 +505,11 @@ export function apply(ctx: Context, config: Config) {
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
       
     } else if (template == "content") {
-      // debug("content");
       html = cheerio.load(description)
       let imgList = []
       html('img').map((key, i) => imgList.push(i.attribs.src))
       imgList = [...new Set(imgList)]
-      // debug(imgList)
       let imgBufferList = Object.assign({}, ...(await Promise.all(imgList.map(async src => ({ [src]: await getImageUrl(src, arg) })))))
-      // debug(imgBufferList)
       // imgList = await Promise.all(imgList.map(async ([key,i])=>({[key]:await getImageUrl(i, arg)}))) 
       html('img').replaceWith((key, Dom) => `<p>$img{{${imgList[key]}}}</p>`)
       msg = html.text()
@@ -510,12 +551,10 @@ export function apply(ctx: Context, config: Config) {
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
-      debug("default");
       description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
-      debug(description);
+      debug(description,'description');
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
-        debug("puppeteer:proxyAgent");
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
@@ -531,12 +570,10 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only description") {
-      // debug("only description");
       description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
-      // debug(description);
+      debug(description,'description');
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
-        debug("puppeteer:proxyAgent");
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
       html('img').attr('style', 'object-fit:scale-down;max-width:100%;')
@@ -551,13 +588,11 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "link") {
-      // debug("only description");
       html = cheerio.load(description)
-      debug(html('a')[0].attribs)
       let src = html('a')[0].attribs.href
+      debug(src,'link src','info')
       let html2 = cheerio.load((await $http(src,arg)).data)
       if(arg?.proxyAgent?.enabled){
-        debug("puppeteer:proxyAgent");
         await Promise.all(html2('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
       html2('img').attr('style', 'object-fit:scale-down;max-width:100%;')
@@ -570,25 +605,24 @@ export function apply(ctx: Context, config: Config) {
       }
     }
     // msg = pushVideo(msg, html)
-    debug("msg");
-    debug(msg);
     if (config.msg.censor) {
-      return `<censor>${msg}</censor>`
+      msg = `<censor>${msg}</censor>`
     }
+    debug(msg,"parse:msg",'info');
     return msg
   }
   const feeder = async () => {
     debug("feeder");
     const rssList = await ctx.database.get(('rssOwl' as any), {})
-    // debug(rssList);
+    debug(rssList,'rssList','info');
     for (const rssItem of rssList) {
       // console.log(`${rssItem.platform}:${rssItem.guildId}`);
       try {
         let arg: rssArg = mixinArg(rssItem.arg || {})
         if (rssItem.arg.refresh) {
           if (arg.nextUpdataTime > +new Date()) continue
-          let nextUpdataTime = arg.nextUpdataTime + arg.refresh
-          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { nextUpdataTime })
+          // arg.nextUpdataTime = arg.nextUpdataTime + arg.refresh
+          arg.nextUpdataTime = arg.nextUpdataTime + arg.refresh*Math.ceil((+new Date() - arg.nextUpdataTime)/arg.refresh)
         }
         try {
           let rssItemList = (await Promise.all(rssItem.url.split("|")
@@ -598,8 +632,8 @@ export function apply(ctx: Context, config: Config) {
             .filter(item => !arg.filter?.some(keyword => {
               let isFilter = new RegExp(keyword, 'im').test(item.title) || new RegExp(keyword, 'im').test(item.description)
               if(isFilter){
-                debug(`filter:${keyword}`)
-                debug(item)
+                debug(`filter:${keyword}`,'','info')
+                debug(item,'filter rss item','info')
                 return true
               }else{return false}
             }))
@@ -607,8 +641,7 @@ export function apply(ctx: Context, config: Config) {
           if (arg.reverse) {
             itemArray = itemArray.reverse()
           }
-          // debug("itemArray");
-          debug(itemArray[0]);
+          debug(itemArray[0],'first rss response','details');
           let messageList, rssItemArray
           let lastPubDate = +new Date(itemArray[0].pubDate) || 0
           if (rssItem.arg.forceLength) {
@@ -618,8 +651,8 @@ export function apply(ctx: Context, config: Config) {
           } else {
             let rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
-            debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`);
-            debug(rssItemArray.map(i => i.title));
+            debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`,'','info');
+            debug(rssItemArray.map(i => i.title),'','info');
             messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, rssItem.author)))
           }
           let message
@@ -635,15 +668,16 @@ export function apply(ctx: Context, config: Config) {
           } else if (config.basic.merge == "有多条更新时合并") {
             message = messageList.length > 1 ? `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>` : messageList.join("")
           }
-          debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message))
-          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate })
+          debug(`更新内容采集完成:${rssItem.title}`,'','info')
+          debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message),'broadcast return','info')
+          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate,arg })
+          debug(`更新成功:${rssItem.title}`,'','info')
         } catch (error) {
-          logger.error(`更新失败:${JSON.stringify(rssItem)}`)
-          logger.error(error)
+          debug(error,`更新失败:${JSON.stringify(rssItem)}`,'error')
         }
         
       } catch (error) {
-        debug(error)
+        debug(error,'','error')
       }
     }
   }
@@ -666,22 +700,21 @@ export function apply(ctx: Context, config: Config) {
     }
     if (daily) {
       json['refresh'] = 1440
-      let forceLength = daily.split("/")?.[1]
       let [hour = 8, minutes = 0] = daily.split("/")[0].split(":").map(i => parseInt(i))
       minutes = minutes > 60 ? 0 : minutes < 0 ? 0 : minutes
       let date = new Date()
-      let nowHours = date.getHours()
-      nowHours > date.getHours() && date.setDate(date.getDate() + 1)
-      date.setHours(hour)
-      date.setMinutes(minutes)
+      date.setHours(hour,minutes,0,0)
+      if(+new Date()>+date){date.setHours(24)}
       json.nextUpdataTime = +date
+      
+      let forceLength = parseInt(options.daily.split("/")?.[1])
       if (forceLength) {
-        json.forceLength = parseInt(forceLength)
+        json.forceLength = forceLength
       }
     }
     if (json.refresh) {
       json.refresh = json.refresh ? (parseInt(json.refresh) * 1000) : 0
-      json.nextUpdataTime = +new Date() + json.refresh
+      // json.nextUpdataTime = +new Date() + json.refresh
     }
     if (json.forceLength) {
       json.forceLength = parseInt(json.forceLength)
@@ -693,11 +726,7 @@ export function apply(ctx: Context, config: Config) {
       json.block = json.block.split("/")
     }
     if (json.proxyAgent) {
-      // debug("formatArg:proxyAgent");
-      // debug(json.proxyAgent);
-
       if (json.proxyAgent == 'false' || json.proxyAgent == 'none' || json.proxyAgent == '') {
-        // debug("enabled:false");
         json.proxyAgent = { enabled: false }
       } else {
         let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=\/\/)/)
@@ -713,6 +742,7 @@ export function apply(ctx: Context, config: Config) {
         }
       }
     }
+    debug(json,'formatArg','details')
     return json
   }
   const mixinArg = (arg):rssArg => ({
@@ -755,14 +785,12 @@ export function apply(ctx: Context, config: Config) {
     .option('quick', '-q [content] 查询快速订阅列表')
     .example('rsso https://hub.slarker.me/qqorw')
     .action(async ({ session, options }, url) => {
-      // debug("init")
-      debug(options)
-      // debug(session)
+      debug(options,'options','info')
       
       const { id: guildId } = session.event.guild as any
       const { platform } = session.event as any
       const { id: author } = session.event.user as any
-      debug(`${platform}:${author}:${guildId}`)
+      debug(`${platform}:${author}:${guildId}`,'','info')
       if (options?.quick==='') {
         return '输入 rsso -q [id] 查询详情\n'+quickList.map((v,i)=>`${i+1}.${v.name}`).join('\n')
       }
@@ -787,10 +815,7 @@ export function apply(ctx: Context, config: Config) {
           .map(i=>`${parseQuickUrl(i)}${i==parseQuickUrl(i)?'':`(${i})`}`).join("|")}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
       }
 
-
-      // debug(rssList)
       if (options.pull) {
-        // debug(`pull:${options.pull}`)
         let item = rssList.find(i => i.rssId === +options.pull) ||
           rssList.find(i => i.url == options.pull) ||
           rssList.find(i => i.url.indexOf(options.pull) + 1) ||
@@ -798,7 +823,7 @@ export function apply(ctx: Context, config: Config) {
         if (item == -1) {
           return `未找到${options.pull}`
         }
-        debug(`pull:${item.title}`)
+        debug(`pull:${item.title}`,'','info')
         let { url, author, arg } = item
         arg = mixinArg(arg)
         //
@@ -807,14 +832,12 @@ export function apply(ctx: Context, config: Config) {
           .map(async url => await getRssData(url, arg)))
         let itemArray = rssItemList.flat(1)
           .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-        // debug("itemArray");
-        // debug(itemArray);
+        debug(itemArray,'itemArray','info');
         let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
-        // debug("rssItemArray");
-        // debug(rssItemArray);
+        debug(rssItemArray,"rssItemArray",'info');
         let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, author)))).flat(Infinity)
         // debug("mergeItem");
-        // debug(messageList)
+        debug(messageList,"mergeItem",'info')
         return `<message forward>${messageList.join('')}</message>`
       }
       let rssItemList
@@ -823,8 +846,8 @@ export function apply(ctx: Context, config: Config) {
       let arg = mixinArg(optionArg)
       let urlList = url?.split('|')?.map(i=>parseQuickUrl(i))
       if (options.test) {
-        debug(`test:${url}`)
-        debug({ guildId, platform, author, arg, optionArg })
+        debug(`test:${url}`,'','info')
+        debug({ guildId, platform, author, arg, optionArg },'','info')
         if (!url) return '请输入URL'
         let rssItemList = await Promise.all(urlList
           .map(async url => await getRssData(url, arg)))
@@ -836,7 +859,7 @@ export function apply(ctx: Context, config: Config) {
         return `<message forward>${messageList.join('')}</message>`
       }
       if (options.remove) {
-        // debug(`remove:${options.remove}`)
+        debug(`remove:${options.remove}`,'','info')
         let removeIndex = ((rssList.findIndex(i => i.rssId === +options.remove) + 1) ||
           (rssList.findIndex(i => i.url == options.remove) + 1) ||
           (rssList.findIndex(i => i.url.indexOf(options.remove) + 1) + 1) ||
@@ -845,13 +868,13 @@ export function apply(ctx: Context, config: Config) {
           return `未找到${options.remove}`
         }
         let removeItem = rssList[removeIndex]
-        debug(`remove:${removeItem}`)
+        debug(`remove:${removeItem}`,'','info')
         ctx.database.remove(('rssOwl' as any), { id: removeItem.id })
         return `已取消订阅：${removeItem.title}`
       }
       if (options?.removeAll != undefined) {
         // debug(`removeAll:${rssList.length}`)
-        // debug(rssList)
+        debug(rssList,'','info')
         let rssLength = rssList.length
         await ctx.database.remove(('rssOwl' as any), { platform, guildId })
         return `已删除${rssLength}条`
@@ -859,21 +882,9 @@ export function apply(ctx: Context, config: Config) {
       if (config.basic.urlDeduplication && (rssList.findIndex(i => i.url == url) + 1)) {
         return '已订阅此链接。'
       }
-      // debug(url)
+      debug(url,'','info')
       if (!url) {
         return '未输入url'
-      }
-      // debug("subscribe active")
-      let getLastPubDate = () => {
-        if (options.daily) {
-          let time = options.daily.split("/")[0].split(":")
-          let date = new Date()
-          date.setHours(time[0])
-          time[1] && date.setMinutes(time[1])
-          return +date
-        } else {
-          return +new Date()
-        }
       }
       const subscribe = {
         url,
@@ -883,9 +894,9 @@ export function apply(ctx: Context, config: Config) {
         rssId: (+rssList.slice(-1)?.[0]?.rssId || 0) + 1,
         arg: optionArg,
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
-        lastPubDate: getLastPubDate()
+        lastPubDate: 0
       }
-      // debug(subscribe);
+      debug(subscribe,"subscribe",'info');
       if (options.force) {
         await ctx.database.create(('rssOwl' as any), subscribe)
         return '添加订阅成功'
