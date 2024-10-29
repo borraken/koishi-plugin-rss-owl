@@ -98,6 +98,41 @@ rsso -d 10:00 <url>
 
 ```
 
+### 3. 插值说明
+
+{{插值1|插值2|插值3...|'缺省'}}
+
+//如果插值1未找到,则往后查询,也可以用''单引号插入文字作为缺省值
+
+|插值变量名(写入{{}}中)|说明（不含*的条目有可能不被提供）|内容|
+|--|--|--|
+|item元素可以直接用变量名|||
+|title|标题*|10月29日，星期二，在这里每天60秒读懂世界！|
+|description|内容*|--|
+|link|链接*|https://www.qqorw.cn/mrzb/657.html|
+|guid|唯一标识符|https://www.qqorw.cn/mrzb/657.html|
+|pubDate|更新时间（不等于RSS源的收录时间）|Tue, 29 Oct 2024 00:50:29 GMT|
+|author|作者|早报网|
+|category|类别|每日早报|
+|channel元素需要加上前缀|||
+|rss.channel.title|频道标题*|早报网|
+|rss.channel.link|频道链接*|https://qqorw.cn/|
+|rss.channel.description|频道描述*|每天更新15条简语早报和一条微语，国际早报，财经早报，早报软件，每天60秒足不出户了解天下事！ - Powered by RSSHub|
+|rss.channel.generator|用于生成 feed 的程序|RSSHub|
+|rss.channel.webMaster|此 feed 的 web 管理员的电子邮件地址|contact@rsshub.app (RSSHub)|
+|rss.channel.language|--|zh-cn|
+|rss.channel.image.url|频道图像地址|https://qqorw.cn/static/upload/2022/07/22/202207227737.png|
+|rss.channel.image.title|--|早报网|
+|rss.channel.image.link|--|https://qqorw.cn|
+|arg元素与RSS协议无关，是插件内部记录订阅信息的元素|使用中的插件配置项也在其中|可以通过数据库插件查询|
+|arg.title|订阅标题||
+|arg.url|订阅链接||
+|arg.author|订阅用户的id||
+|arg.rssId|订阅id||
+|arg.template|订阅模板||
+|arg.proxyAgent.host|代理地址||
+
+
 ##### todu
 - [x] 稳定使用
 - [x] 快速订阅功能

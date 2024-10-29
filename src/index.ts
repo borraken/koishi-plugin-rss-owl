@@ -157,7 +157,7 @@ export const Config = Schema.object({
           <div>{{pubDate}}</div>
           <div>{{description}}</div>
       </div>
-  </body>`).description('custom模板的内容，使用插值载入推送内容'),
+  </body>`).description('custom模板的内容，使用插值载入推送内容。 [说明](https://github.com/borraken/koishi-plugin-rss-owl?tab=readme-ov-file#3-%E6%8F%92%E5%80%BC%E8%AF%B4%E6%98%8E)'),
   }).description('模板设置'),
   net: Schema.object({
     proxyAgent: Schema.intersect([
@@ -482,13 +482,16 @@ export function apply(ctx: Context, config: Config) {
     arg.block?.forEach(blockWord => description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill("*").join("")))
     // const pushVideo = (msg, html) => `${msg}${config.basic.videoFetch ? html('video').map((v, i) => i.attribs.src).map(i => `<video src="${i}"/>`).join() : ''}`
     debug(template,'template');
+    // const toString = (obj)=>typeof obj === 'object' ? JSON.stringify(obj) : obj
+    const parseContent = (template,item)=>template.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split("|").reduce((t,v)=>t||v.match(/^'(.*)'$/)?.[1]||v.split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item),''))
     if(config.basic.videoMode==='filter'){
       html = cheerio.load(description)
       html('video').length > 0
       return ''
     }
     if (template == "custom") {
-      description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
+      // description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
+      description = parseContent(config.template.custom,{...item,arg})
       debug(description,'description');
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -517,7 +520,7 @@ export function apply(ctx: Context, config: Config) {
         let src = match.match(/\$img\{\{(.*?)\}\}/)[1]
         return `<img src="${imgBufferList[src]}"/>`
       })
-      msg = config.template.content.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
+      msg = parseContent(config.template.content,{...item,arg})
       logger.info(msg)
       // msg = `${item?.title?`《${item?.title}》\n`:''}${msg}`
       // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
@@ -551,7 +554,7 @@ export function apply(ctx: Context, config: Config) {
     } else if (template == "proto") {
       msg = description
     } else if (template == "default") {
-      description = getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
+      description = parseContent(getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
       debug(description,'description');
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
@@ -570,8 +573,7 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only description") {
-      description = getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize).replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
-      debug(description,'description');
+      description =parseContent(getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
       html = cheerio.load(description)
       if(arg?.proxyAgent?.enabled){
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
@@ -647,13 +649,13 @@ export function apply(ctx: Context, config: Config) {
           if (rssItem.arg.forceLength) {
             // debug("forceLength");
             rssItemArray = itemArray.filter((v, i) => i < arg.forceLength)
-            messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, arg, rssItem.author)))
+            messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           } else {
             let rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
             debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`,'','info');
             debug(rssItemArray.map(i => i.title),'','info');
-            messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, rssItem.author)))
+            messageList = await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           }
           let message
           if(!messageList.join(""))return
@@ -814,50 +816,6 @@ export function apply(ctx: Context, config: Config) {
         return `title:${rssObj.title}\nUrl:${rssObj.url.split("|")
           .map(i=>`${parseQuickUrl(i)}${i==parseQuickUrl(i)?'':`(${i})`}`).join("|")}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
       }
-
-      if (options.pull) {
-        let item = rssList.find(i => i.rssId === +options.pull) ||
-          rssList.find(i => i.url == options.pull) ||
-          rssList.find(i => i.url.indexOf(options.pull) + 1) ||
-          rssList.find(i => i.title.indexOf(options.pull) + 1)
-        if (item == -1) {
-          return `未找到${options.pull}`
-        }
-        debug(`pull:${item.title}`,'','info')
-        let { url, author, arg } = item
-        arg = mixinArg(arg)
-        //
-        let rssItemList = await Promise.all(url.split("|")
-          .map(i=>parseQuickUrl(i))
-          .map(async url => await getRssData(url, arg)))
-        let itemArray = rssItemList.flat(1)
-          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-        debug(itemArray,'itemArray','info');
-        let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
-        debug(rssItemArray,"rssItemArray",'info');
-        let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, author)))).flat(Infinity)
-        // debug("mergeItem");
-        debug(messageList,"mergeItem",'info')
-        return `<message forward>${messageList.join('')}</message>`
-      }
-      let rssItemList
-      let itemArray, item
-      let optionArg = formatArg(options)
-      let arg = mixinArg(optionArg)
-      let urlList = url?.split('|')?.map(i=>parseQuickUrl(i))
-      if (options.test) {
-        debug(`test:${url}`,'','info')
-        debug({ guildId, platform, author, arg, optionArg },'','info')
-        if (!url) return '请输入URL'
-        let rssItemList = await Promise.all(urlList
-          .map(async url => await getRssData(url, arg)))
-        let itemArray = rssItemList
-          .flat(1)
-          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-        let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
-        let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, arg, author)))).flat(Infinity)
-        return `<message forward>${messageList.join('')}</message>`
-      }
       if (options.remove) {
         debug(`remove:${options.remove}`,'','info')
         let removeIndex = ((rssList.findIndex(i => i.rssId === +options.remove) + 1) ||
@@ -879,13 +837,36 @@ export function apply(ctx: Context, config: Config) {
         await ctx.database.remove(('rssOwl' as any), { platform, guildId })
         return `已删除${rssLength}条`
       }
-      if (config.basic.urlDeduplication && (rssList.findIndex(i => i.url == url) + 1)) {
-        return '已订阅此链接。'
+
+      if (options.pull) {
+        let item = rssList.find(i => i.rssId === +options.pull) ||
+          rssList.find(i => i.url == options.pull) ||
+          rssList.find(i => i.url.indexOf(options.pull) + 1) ||
+          rssList.find(i => i.title.indexOf(options.pull) + 1)
+        if (item == -1) {
+          return `未找到${options.pull}`
+        }
+        debug(`pull:${item.title}`,'','info')
+        let { url, author, arg } = item
+        arg = mixinArg(arg)
+        //
+        let rssItemList = await Promise.all(url.split("|")
+          .map(i=>parseQuickUrl(i))
+          .map(async url => await getRssData(url, arg)))
+        let itemArray = rssItemList.flat(1)
+          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
+        debug(itemArray,'itemArray','info');
+        let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
+        debug(rssItemArray,"rssItemArray",'info');
+        let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, {...item,...arg}, author)))).flat(Infinity)
+        // debug("mergeItem");
+        debug(messageList,"mergeItem",'info')
+        return `<message forward>${messageList.join('')}</message>`
       }
-      debug(url,'','info')
-      if (!url) {
-        return '未输入url'
-      }
+      let item
+      let optionArg = formatArg(options)
+      let arg = mixinArg(optionArg)
+      let urlList = url?.split('|')?.map(i=>parseQuickUrl(i))
       const subscribe = {
         url,
         platform,
@@ -895,6 +876,26 @@ export function apply(ctx: Context, config: Config) {
         arg: optionArg,
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
         lastPubDate: 0
+      }
+      if (options.test) {
+        debug(`test:${url}`,'','info')
+        debug({ guildId, platform, author, arg, optionArg },'','info')
+        if (!url) return '请输入URL'
+        let rssItemList = await Promise.all(urlList
+          .map(async url => await getRssData(url, arg)))
+        let itemArray = rssItemList
+          .flat(1)
+          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
+        let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
+        let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, {...subscribe,...arg}, author)))).flat(Infinity)
+        return `<message forward>${messageList.join('')}</message>`
+      }
+      if (config.basic.urlDeduplication && (rssList.findIndex(i => i.url == url) + 1)) {
+        return '已订阅此链接。'
+      }
+      debug(url,'','info')
+      if (!url) {
+        return '未输入url'
       }
       debug(subscribe,"subscribe",'info');
       if (options.force) {
@@ -918,11 +919,11 @@ export function apply(ctx: Context, config: Config) {
         // rssOwl.push(JSON.stringify(subscribe)) 
         if (arg.firstLoad) {
           if (arg.forceLength) {
-            let messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, arg, item.author)))
+            let messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg}, item.author)))
             let message = item.arg.merge ? `<message forward><author id="${item.author}"/>${messageList.join("")}</message>` : messageList.join("")
             return message
           } else {
-            return `<message>添加订阅成功</message>${await parseRssItem(item, arg, author)}`
+            return `<message>添加订阅成功</message>${await parseRssItem(item, {...subscribe,...arg}, author)}`
           }
         }
         return '添加订阅成功'
