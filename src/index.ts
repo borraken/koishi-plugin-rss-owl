@@ -38,6 +38,7 @@ const debugLevel = ["disable","error","info","details"]
 
 interface BasicConfig {
   usePoster: boolean;
+  margeVideo: boolean;
   defaultTemplate?: 'content' | 'only text' | 'only media' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   timeout?: number
   refresh?: number
@@ -50,9 +51,11 @@ interface BasicConfig {
   autoSplitImage?: boolean
   cacheDir?: string
   replaceDir?: string
+  
 }
 
 interface TemplateConfig {
+  customRemark: string;
   bodyWidth?: number
   bodyPadding?: number
   bodyFontSize?: number
@@ -68,6 +71,7 @@ interface MsgConfig {
   censor?: boolean
   keywordFilter?: Array<string>
   keywordBlock?: Array<string>
+  blockString?:string
   rssHubUrl?:string
   readCDATA?:boolean
 }
@@ -134,6 +138,7 @@ export const Config = Schema.object({
     // sendRequire: Schema.boolean().default(true).description('验证发送').experimental(),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
+    margeVideo: Schema.boolean().default(false).description('以合并消息发送视频').experimental(),
     usePoster: Schema.boolean().default(false).description('加载视频封面').experimental(),
     autoSplitImage: Schema.boolean().description('自动垂直拆分大尺寸图片以避免发送限制').default(true),
     cacheDir: Schema.string().description('File模式时使用的缓存路径').default('data/cache/rssOwl'),
@@ -158,6 +163,7 @@ export const Config = Schema.object({
           <div>{{description}}</div>
       </div>
   </body>`).description('custom模板的内容，使用插值载入推送内容。 [说明](https://github.com/borraken/koishi-plugin-rss-owl?tab=readme-ov-file#3-%E6%8F%92%E5%80%BC%E8%AF%B4%E6%98%8E)'),
+  customRemark: Schema.string().role('textarea', { rows: [3, 2] }).default(`{{description}}`).description('custom模板的文字补充，以custom图片作为description再次插值'),
   }).description('模板设置'),
   net: Schema.object({
     proxyAgent: Schema.intersect([
@@ -183,6 +189,7 @@ export const Config = Schema.object({
     rssHubUrl:Schema.string().role('link').description('使用快速订阅时rssHub的地址，你可以使用`rsso -q`检查可用的快速订阅').default('https://hub.slarker.me'),
     keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default([]),
     keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default([]),
+    blockString:Schema.string().description('关键字屏蔽替换内容').default('*'),
     // readCDATA: Schema.boolean().description('读取CDATA中内容，CDATA本意是需要被XML解析器忽略的内容，但部分订阅会将有效内容放入，除非必须，否则不建议开启，建议在订阅时使用`-a CDATA:true`以局部启用，开启后可能导致非预期的错误').default(false).experimental(),
     censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
   }).description('消息处理'),
@@ -275,6 +282,7 @@ export function apply(ctx: Context, config: Config) {
     {prefix:"tg",name:"电报频道",detail:"输入电报频道信息中的链接地址最后部分，部分不提供网页预览的频道无法订阅",explain:"tg:[:channel_name]",example:"tg:woshadiao",argLength:[1,1],replace:"/telegram/channel$1"},
     {prefix:"mp-tag",name:"微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，浏览器打开Tag文章列表，如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入__biz和album_id",explain:"mp-tag:[:__biz]/[:album_id]",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",argLength:[2,2],replace:"/wechat/mp/msgalbum$1$2"},
     {prefix:"gh",name:"github相关",detail:"Repo Issue:gh:issue/[:user]/[:repo]/[:state?(open|closed|all)]/[:labels?(open|bug|...)]\nRepo Stars:gh:stars/[:user]/[:repo]\nTrending:gh:trending/[:since(daliy|weekly|monthly)]/[:language?(javascript|c#|c++|...)]/[:spoken_language?(English|Chinese|...)]\nUser Activities:gh:activity/[:user]",explain:"gh:[type]/[param1]/[param2]...",example:"gh:issue/koishijs/koishi/open",argLength:[2,5],replace:"/github$1$2$3$4$5"},
+    // {prefix:"weibo",name:"微博博主",detail:"输入博主用户id",explain:"weibo:[:uid]",example:"weibo:1195230310",argLength:[1,2],replace:"/weibo/user$1$2$3$4$5"},
   ]
   const parseQuickUrl = (url)=>{
     let correntQuickObj = quickList.find(i=>new RegExp(`^${i.prefix}:`).test(url))
@@ -477,23 +485,26 @@ export function apply(ctx: Context, config: Config) {
     let msg: string = ""
     let html
     let videoList = []
-    let description: string = item.description?.join?.('') || item.description
+    item.description = item.description?.join?.('') || item.description
     //block
-    arg.block?.forEach(blockWord => description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill("*").join("")))
+    arg.block?.forEach(blockWord =>{
+      item.description = item.description.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill(config.msg.blockString).join(""))
+      item.title = item.title.replace(new RegExp(blockWord, 'gim'), i => Array(i.length).fill(config.msg.blockString).join(""))
+    })
     // const pushVideo = (msg, html) => `${msg}${config.basic.videoFetch ? html('video').map((v, i) => i.attribs.src).map(i => `<video src="${i}"/>`).join() : ''}`
     debug(template,'template');
     // const toString = (obj)=>typeof obj === 'object' ? JSON.stringify(obj) : obj
     const parseContent = (template,item)=>template.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split("|").reduce((t,v)=>t||v.match(/^'(.*)'$/)?.[1]||v.split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item),''))
     if(config.basic.videoMode==='filter'){
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       html('video').length > 0
       return ''
     }
     if (template == "custom") {
       // description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
-      description = parseContent(config.template.custom,{...item,arg})
-      debug(description,'description');
-      html = cheerio.load(description)
+      item.description = parseContent(config.template.custom,{...item,arg})
+      debug(item.description,'description');
+      html = cheerio.load(item.description)
       if(arg?.proxyAgent?.enabled){
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
@@ -504,11 +515,13 @@ export function apply(ctx: Context, config: Config) {
         msg = await ctx.puppeteer.render(html.html())
         msg = await puppeteerToFile(msg)
       }
+      msg = parseContent(config.template.customRemark,{...item,arg,description:msg})
+
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
       
     } else if (template == "content") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       let imgList = []
       html('img').map((key, i) => imgList.push(i.attribs.src))
       imgList = [...new Set(imgList)]
@@ -530,10 +543,10 @@ export function apply(ctx: Context, config: Config) {
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
       msg+=videoList.map(([src,poster])=>h('img',{src:poster})).join("")
     } else if (template == "only text") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       msg = html.text()
     } else if (template == "only media") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
       // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
@@ -542,21 +555,21 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only image") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
     } else if (template == "only video") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
       // msg += videoList.map(src=>h.video(src,{poster:``})).join("")
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "proto") {
-      msg = description
+      msg = item.description
     } else if (template == "default") {
-      description = parseContent(getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
-      debug(description,'description');
-      html = cheerio.load(description)
+      item.description = parseContent(getDefaultTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
+      debug(item.description,'description');
+      html = cheerio.load(item.description)
       if(arg?.proxyAgent?.enabled){
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
@@ -573,8 +586,8 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only description") {
-      description =parseContent(getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
-      html = cheerio.load(description)
+      item.description =parseContent(getDescriptionTemplate(config.template.bodyWidth, config.template.bodyPadding,config.template.bodyFontSize),{...item,arg})
+      html = cheerio.load(item.description)
       if(arg?.proxyAgent?.enabled){
         await Promise.all(html('img').map(async(v,i)=>i.attribs.src = await getImageUrl(i.attribs.src,arg,true) )) 
       }
@@ -590,7 +603,7 @@ export function apply(ctx: Context, config: Config) {
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "link") {
-      html = cheerio.load(description)
+      html = cheerio.load(item.description)
       let src = html('a')[0].attribs.href
       debug(src,'link src','info')
       let html2 = cheerio.load((await $http(src,arg)).data)
@@ -663,6 +676,8 @@ export function apply(ctx: Context, config: Config) {
             message = `<message forward><author id="${rssItem.author}"/>${messageList.join("")}</message>`
           } else if (arg.merge === false) {
             message = messageList.join("")
+          } else if (config.basic.margeVideo&&messageList.some(msg=>(/<video.*>/).test(msg))) {
+            message = `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>`
           } else if (config.basic.merge == "一直合并") {
             message = `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>`
           } else if (config.basic.merge == "不合并") {

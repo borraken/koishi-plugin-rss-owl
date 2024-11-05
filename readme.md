@@ -149,4 +149,6 @@ rsso -d 10:00 <url>
 - [koishi-plugin-rss-cat](https://github.com/jexjws/koishi-plugin-rss-cat)
 
 ## 化缘
-- [ifdian](https://ifdian.net/setting/plan)
+- [ifdian](https://ifdian.net/a/toukoT)
+![ifdian_IMG](https://github.com/borraken/koishi-plugin-rss-owl/other/afdian-橙子.jfif)
+
