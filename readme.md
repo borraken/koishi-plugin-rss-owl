@@ -150,5 +150,4 @@ rsso -d 10:00 <url>
 
 ## 化缘
 - [ifdian](https://ifdian.net/a/toukoT)
-![ifdian_IMG](https://github.com/borraken/koishi-plugin-rss-owl/other/afdian-橙子.jfif)
 
