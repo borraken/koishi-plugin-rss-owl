@@ -1,4 +1,4 @@
-import { Context, Session, Logger, Schema, MessageEncoder, h } from 'koishi'
+import { Context, Session, Logger, Schema, MessageEncoder, h, $, clone } from 'koishi'
 import axios from 'axios'
 import * as cheerio from 'cheerio';
 import { } from 'koishi-plugin-puppeteer'
@@ -46,6 +46,7 @@ interface BasicConfig {
   maxRssItem?: number
   firstLoad?: boolean
   urlDeduplication?: boolean
+  resendUpdataContent: 'disable'|'latest'|'all'
   imageMode?: 'base64' | 'File'
   videoMode?: 'filter'|'href'|'base64' | 'File'
   autoSplitImage?: boolean
@@ -103,7 +104,7 @@ export interface rssArg {
 
   forceLength?: number
   timeout?: number
-  refresh?: number
+  interval?: number
   reverse?: boolean
 
   firstLoad?: boolean
@@ -136,6 +137,7 @@ export const Config = Schema.object({
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
     // sendRequire: Schema.boolean().default(true).description('验证发送').experimental(),
+    resendUpdataContent: Schema.union(['disable','latest','all']).description('当内容更新时再次发送').default('disable').experimental(),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
     margeVideo: Schema.boolean().default(false).description('以合并消息发送视频').experimental(),
@@ -212,6 +214,7 @@ export function apply(ctx: Context, config: Config) {
       length: 65535
     },
     arg: "json",
+    lastContent: "json",
     title: "string",
     lastPubDate: "timestamp",
   }, {
@@ -634,10 +637,13 @@ export function apply(ctx: Context, config: Config) {
       // console.log(`${rssItem.platform}:${rssItem.guildId}`);
       try {
         let arg: rssArg = mixinArg(rssItem.arg || {})
-        if (rssItem.arg.refresh) {
+        debug(arg,'arg','details')
+        debug(rssItem.arg,'originalArg','details')
+        let originalArg
+        if (rssItem.arg.interval) {
           if (arg.nextUpdataTime > +new Date()) continue
           // arg.nextUpdataTime = arg.nextUpdataTime + arg.refresh
-          arg.nextUpdataTime = arg.nextUpdataTime + arg.refresh*Math.ceil((+new Date() - arg.nextUpdataTime)/arg.refresh)
+          originalArg.nextUpdataTime = arg.nextUpdataTime + arg.interval*Math.ceil((+new Date() - arg.nextUpdataTime)/arg.interval)
         }
         try {
           let rssItemList = (await Promise.all(rssItem.url.split("|")
@@ -652,19 +658,34 @@ export function apply(ctx: Context, config: Config) {
                 return true
               }else{return false}
             }))
-  
+          
+          const getLastContent = (item)=>{
+            let arr = ['title','description','link','guid']
+            return Object.assign({},...arr.map(i=>clone(item?.[i]?{[i]:item[i]}:{})))
+          }
+          let lastContent = {itemArray:config.basic.resendUpdataContent==='all'?itemArray.map(getLastContent):config.basic.resendUpdataContent==='latest'? [getLastContent(itemArray[0])] :[]}
+          
+          let lastPubDate = +new Date(itemArray[0].pubDate) || 0
           if (arg.reverse) {
             itemArray = itemArray.reverse()
           }
           debug(itemArray[0],'first rss response','details');
           let messageList, rssItemArray
-          let lastPubDate = +new Date(itemArray[0].pubDate) || 0
           if (rssItem.arg.forceLength) {
             // debug("forceLength");
+            debug(`forceLength:${rssItem.arg.forceLength}`,'','details');
             rssItemArray = itemArray.filter((v, i) => i < arg.forceLength)
+            debug(rssItemArray.map(i => i.title),'','info');
             messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           } else {
-            let rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
+            rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)||rssItem.lastContent.itemArray.some(oldRssItem=>{
+              debug(oldRssItem,'oldRssItem','details')
+              debug(v,'newRssItem','details')
+              debug((oldRssItem?.guid?(oldRssItem.guid===v.guid):(oldRssItem.link===v.link&&oldRssItem.title===v.title)),'isSameRssItem','details')
+              if(!(oldRssItem?.guid?(oldRssItem.guid===v.guid):(oldRssItem.link===v.link&&oldRssItem.title===v.title)))return false
+              debug(oldRssItem.description!==v.description,'isUpdata','details')
+              return oldRssItem.description!==v.description
+            })).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
             debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`,'','info');
             debug(rssItemArray.map(i => i.title),'','info');
@@ -687,7 +708,9 @@ export function apply(ctx: Context, config: Config) {
           }
           debug(`更新内容采集完成:${rssItem.title}`,'','info')
           debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message),'broadcast return','info')
-          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate,arg })
+          
+          debug(lastPubDate,'lastPubDate','info')
+          await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate,arg:originalArg,lastContent })
           debug(`更新成功:${rssItem.title}`,'','info')
         } catch (error) {
           debug(error,`更新失败:${JSON.stringify(rssItem)}`,'error')
@@ -701,9 +724,9 @@ export function apply(ctx: Context, config: Config) {
   const formatArg = (options): rssArg => {
     let { arg, template, daily } = options
     let json = Object.assign({}, ...(arg?.split(',')?.map(i => ({ [i.split(":")[0]]: i.split(":")[1] })) || []))
-    let key = ["forceLength", "reverse", "timeout", "refresh", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "proxyAgent", "auth"]
+    let key = ["forceLength", "reverse", "timeout", "interval", "merge", "maxRssItem", "firstLoad", "bodyWidth", "bodyPadding", "proxyAgent", "auth"]
     let booleanKey = ['firstLoad',"reverse", 'merge']
-    let numberKey = ['forceLength', "timeout",'refresh','maxRssItem','bodyWidth','bodyPadding']
+    let numberKey = ['forceLength', "timeout",'interval','maxRssItem','bodyWidth','bodyPadding']
     let falseContent = ['false', 'null', '']
 
     json = Object.assign({}, ...Object.keys(json).filter(i => key.some(key => key == i)).map(key => ({ [key]: booleanKey.some(bkey => bkey == key) ? falseContent.some(c => c == json[key]) : numberKey.some(nkey => nkey == key)?(+json[key]):json[key] })))
@@ -716,12 +739,12 @@ export function apply(ctx: Context, config: Config) {
       json['template'] = templateList.find(i => new RegExp(template).test(i))
     }
     if (daily) {
-      json['refresh'] = 1440
+      json['interval'] = 1440
       let [hour = 8, minutes = 0] = daily.split("/")[0].split(":").map(i => parseInt(i))
       minutes = minutes > 60 ? 0 : minutes < 0 ? 0 : minutes
       let date = new Date()
       date.setHours(hour,minutes,0,0)
-      if(+new Date()>+date){date.setHours(24)}
+      if(+new Date()>+date){date.setDate(date.getDate()+1)}
       json.nextUpdataTime = +date
       
       let forceLength = parseInt(options.daily.split("/")?.[1])
@@ -729,9 +752,9 @@ export function apply(ctx: Context, config: Config) {
         json.forceLength = forceLength
       }
     }
-    if (json.refresh) {
-      json.refresh = json.refresh ? (parseInt(json.refresh) * 1000) : 0
-      // json.nextUpdataTime = +new Date() + json.refresh
+    if (json.interval) {
+      json.interval = json.interval ? (parseInt(json.interval) * 1000) : 0
+      // json.nextUpdataTime = +new Date() + json.interval
     }
     if (json.forceLength) {
       json.forceLength = parseInt(json.forceLength)
@@ -743,7 +766,7 @@ export function apply(ctx: Context, config: Config) {
       json.block = json.block.split("/")
     }
     if (json.proxyAgent) {
-      if (json.proxyAgent == 'false' || json.proxyAgent == 'none' || json.proxyAgent == '') {
+      if (json.proxyAgent == 'false' || json.proxyAgent == 'none' || json.proxyAgent === '') {
         json.proxyAgent = { enabled: false }
       } else {
         let protocol = json.proxyAgent.match(/^(http|https|socks5)(?=\/\/)/)
@@ -769,7 +792,7 @@ export function apply(ctx: Context, config: Config) {
     block:[...config.msg.keywordBlock,...(arg?.block||[])],
     // readCDATA: arg.CDATA??config.msg.readCDATA,
     template: arg.template ?? config.basic.defaultTemplate,
-    proxyAgent: arg.proxyAgent ? (arg.proxyAgent.enabled ? arg.proxyAgent : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
+    proxyAgent: arg?.proxyAgent ? (arg.proxyAgent?.enabled ? arg.proxyAgent : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
   })
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
@@ -822,14 +845,28 @@ export function apply(ctx: Context, config: Config) {
       const rssList = await ctx.database.get(('rssOwl' as any), { platform, guildId })
       
       if (options?.list==='') {
+        debug(rssList,'rssList','info')
         if (!rssList.length) return '未订阅任何链接。'
         return "使用'rsso -l [id]'以查询详情 \nid:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString('zh-CN')})`).join('\n')
       }
       if (options?.list) {
         let rssObj = rssList.find(i=>i.rssId===parseInt(options?.list))||rssList.find(i=>new RegExp(options?.list).test(i.title))
-        if(!rssObj)return '未找到订阅。请输入"rsso -l"查询列表或"rsso -l 订阅id"查询订阅详情'
-        return `title:${rssObj.title}\nUrl:${rssObj.url.split("|")
-          .map(i=>`${parseQuickUrl(i)}${i==parseQuickUrl(i)?'':`(${i})`}`).join("|")}\nauthor:${rssObj.author}\narg:${JSON.stringify(rssObj.arg)}\n${new Date(rssObj.lastPubDate).toLocaleString('zh-CN')}`
+        if(!rssObj)return '未找到订阅。请输入"rsso -l"查询列表或"rsso -l [订阅id]"查询订阅详情'
+        const showArgNameList = ['rssId','title','url','template','platform','guildId','author','merge','timeout','interval','forceLength','nextUpdataTime','maxRssItem','lastPubDate']
+        const _rssArg = Object.assign(rssObj.arg,rssObj)
+        return showArgNameList.map(argName=>{
+          if(!_rssArg?.[argName])return ''
+          let text = ''
+          if(argName==='url'){
+            text = _rssArg?.[argName].split(" | ").map(i=>` ${parseQuickUrl(i)} ${i==parseQuickUrl(i)?'':`(${i})`}`).join(" | ")
+          }else if(argName.includes('Date')||argName.includes('Time')){
+            text = new Date(_rssArg?.[argName]).toLocaleString('zh-CN')
+          }else{
+            text = typeof _rssArg?.[argName] ==='object'? JSON.stringify(_rssArg?.[argName]):_rssArg?.[argName]
+          }
+          return `${argName}:${text}`
+        }).filter(Boolean).join('\n')
+         
       }
       if (options.remove) {
         debug(`remove:${options.remove}`,'','info')
@@ -889,9 +926,11 @@ export function apply(ctx: Context, config: Config) {
         author,
         rssId: (+rssList.slice(-1)?.[0]?.rssId || 0) + 1,
         arg: optionArg,
+        lastContent:{itemArray:[]},
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
         lastPubDate: 0
       }
+      
       if (options.test) {
         debug(`test:${url}`,'','info')
         debug({ guildId, platform, author, arg, optionArg },'','info')
@@ -929,6 +968,7 @@ export function apply(ctx: Context, config: Config) {
           return "RSS中未找到可用的pubDate，这将导致无法取得更新时间，请使用forceLength属性强制在每次更新时取得最新的订阅内容"
         }
 
+        subscribe.rssId =  (+(await ctx.database.get(('rssOwl' as any), { platform, guildId })).slice(-1)?.[0]?.rssId || 0) + 1
         subscribe.lastPubDate = item.pubDate || subscribe.lastPubDate
         ctx.database.create(('rssOwl' as any), subscribe)
         // rssOwl.push(JSON.stringify(subscribe)) 
