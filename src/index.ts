@@ -201,18 +201,12 @@ export const Config = Schema.object({
 
 export function apply(ctx: Context, config: Config) {
   ctx.model.extend(('rssOwl' as any), {
-    id: {
-      type: "integer",
-      length: 65535
-    },
+    id: "integer",
     url: "text",
     platform: "string",
     guildId: "string",
     author: "string",
-    rssId: {
-      type: "integer",
-      length: 65535
-    },
+    rssId: "integer",
     arg: "json",
     lastContent: "json",
     title: "string",
