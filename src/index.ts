@@ -550,16 +550,19 @@ export function apply(ctx: Context, config: Config) {
       msg = html.text()
     } else if (template == "only media") {
       html = cheerio.load(item.description)
-      let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
+      
+      let imgList = []
+      html('img').map((key, i) => imgList.push(i.attribs.src))
+      imgList = await Promise.all([...new Set(imgList)].map(async src =>await getImageUrl(src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
-      // await Promise.all(html('video').map(async(v,i)=>videoList.push(await getVideoUrl(i.attribs.src,arg,true,i))))
-      // msg += videoList.map(src=>h.video(src)).join("")
 
       await Promise.all(html('video').map(async(v,i)=>videoList.push([await getVideoUrl(i.attribs.src,arg,true,i),(i.attribs.poster&&config.basic.usePoster)?await getImageUrl(i.attribs.poster,arg,true):""])))
       msg += videoList.map(([src,poster])=>h('video',{src,poster})).join("")
     } else if (template == "only image") {
       html = cheerio.load(item.description)
-      let imgList = await Promise.all([...html('img').map((v, i) => i.attribs.src)].map(async i => await getImageUrl(i.attribs.src, arg)))
+      let imgList = []
+      html('img').map((key, i) => imgList.push(i.attribs.src))
+      imgList = await Promise.all([...new Set(imgList)].map(async src =>await getImageUrl(src, arg)))
       msg = imgList.map(img => `<img src="${img}"/>`).join("")
     } else if (template == "only video") {
       html = cheerio.load(item.description)
@@ -678,12 +681,8 @@ export function apply(ctx: Context, config: Config) {
             debug(rssItemArray.map(i => i.title),'','info');
             messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           } else {
-            rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)||rssItem.lastContent.itemArray.some(oldRssItem=>{
-              debug(oldRssItem,'oldRssItem','details')
-              debug(v,'newRssItem','details')
-              debug((oldRssItem?.guid?(oldRssItem.guid===v.guid):(oldRssItem.link===v.link&&oldRssItem.title===v.title)),'isSameRssItem','details')
+            rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)||rssItem.lastContent?.itemArray?.some(oldRssItem=>{
               if(!(oldRssItem?.guid?(oldRssItem.guid===v.guid):(oldRssItem.link===v.link&&oldRssItem.title===v.title)))return false
-              debug(oldRssItem.description!==v.description,'isUpdata','details')
               return oldRssItem.description!==v.description
             })).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
@@ -858,7 +857,7 @@ export function apply(ctx: Context, config: Config) {
           if(!_rssArg?.[argName])return ''
           let text = ''
           if(argName==='url'){
-            text = _rssArg?.[argName].split(" | ").map(i=>` ${parseQuickUrl(i)} ${i==parseQuickUrl(i)?'':`(${i})`}`).join(" | ")
+            text = _rssArg?.[argName].split("|").map(i=>` ${parseQuickUrl(i)} ${i==parseQuickUrl(i)?'':`(${i})`}`).join(" | ")
           }else if(argName.includes('Date')||argName.includes('Time')){
             text = new Date(_rssArg?.[argName]).toLocaleString('zh-CN')
           }else{
@@ -983,6 +982,7 @@ export function apply(ctx: Context, config: Config) {
         }
         return '添加订阅成功'
       } catch (error) {
+        debug(error,'添加失败','error')
         return `添加失败:${error}`
       }
     })
