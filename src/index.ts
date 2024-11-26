@@ -53,6 +53,8 @@ interface BasicConfig {
   cacheDir?: string
   replaceDir?: string
   
+  authority:number
+  advancedAuthority:number
 }
 
 interface TemplateConfig {
@@ -132,6 +134,8 @@ export const Config = Schema.object({
       .default('content'),
     timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
     refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
+    authority: Schema.number().min(1).max(5).description('基础指令的权限等级(包括添加,删除订阅等在help中标注为*的行为)').default(1),
+    advancedAuthority: Schema.number().min(1).max(5).description('高级指令的权限等级(包括跨群添加,全员提醒等在help中标注为**的行为)').default(4),
     merge: Schema.union(['不合并', '有多条更新时合并', '一直合并']).description('合并消息规则').default('有多条更新时合并'),
     maxRssItem: Schema.number().description('限制更新时的最大推送数量上限，超出上限时较早的更新会被忽略').default(10),
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
@@ -210,6 +214,7 @@ export function apply(ctx: Context, config: Config) {
     arg: "json",
     lastContent: "json",
     title: "string",
+    followers: "list",
     lastPubDate: "timestamp",
   }, {
     autoInc: true
@@ -626,6 +631,13 @@ export function apply(ctx: Context, config: Config) {
     debug(msg,"parse:msg",'info');
     return msg
   }
+  const findRssItem = (rssList:any[],keyword:number|string)=>{
+    let index = ((rssList.findIndex(i => i.rssId === +keyword) + 1) ||
+      (rssList.findIndex(i => i.url == keyword) + 1) ||
+      (rssList.findIndex(i => i.url.indexOf(keyword) + 1) + 1) ||
+      (rssList.findIndex(i => i.title.indexOf(keyword) + 1) + 1)) - 1
+    return rssList[index]
+  }
   const feeder = async () => {
     debug("feeder");
     const rssList = await ctx.database.get(('rssOwl' as any), {})
@@ -700,6 +712,9 @@ export function apply(ctx: Context, config: Config) {
             message = messageList.length > 1 ? `<message forward><author id="${rssItem.author}"/>${messageList.map(i=>`<message>${i}</message>`).join("")}</message>` : messageList.join("")
           }
           debug(`更新内容采集完成:${rssItem.title}`,'','info')
+          if(rssItem.followers.length){
+            message += `<message>${rssItem.followers.map(followId=>`<at ${followId=='all'?'type':'id'}='${followId}'/>` )}</message>`
+          }
           debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message),'broadcast return','info')
           
           debug(lastPubDate,'lastPubDate','info')
@@ -801,12 +816,15 @@ export function apply(ctx: Context, config: Config) {
     if(config.basic.imageMode=='File')delCache()
   })
   ctx.guild()
-    .command('rssowl <url:text>', '订阅 RSS 链接')
+    .command('rssowl <url:text>', '*订阅 RSS 链接*')
     .alias('rsso')
     .usage('https://github.com/borraken/koishi-plugin-rss-owl')
     .option('list', '-l [content] 查看订阅列表(详情)')
-    .option('remove', '-r <content> [订阅id|关键字] 删除订阅')
-    .option('removeAll', '全部删除订阅')
+    .option('remove', '-r <content> [订阅id|关键字] *删除订阅*')
+    .option('removeAll', '*全部删除订阅*')
+    .option('follow', '-f <content> [订阅id|关键字] 关注订阅，在该订阅更新时提醒你')
+    .option('followAll', '<content> [订阅id|关键字] **在该订阅更新时提醒所有人**')
+    .option('target', '<content> [群组id] **跨群订阅**')
     .option('arg', '-a <content> 自定义配置')
     .option('template', '-i <content> 消息模板,例:-i custom')
     .option('title', '-t <content> 自定义命名')
@@ -823,6 +841,8 @@ export function apply(ctx: Context, config: Config) {
       const { id: guildId } = session.event.guild as any
       const { platform } = session.event as any
       const { id: author } = session.event.user as any
+      const { authority } = session.user as any
+      
       debug(`${platform}:${author}:${guildId}`,'','info')
       if (options?.quick==='') {
         return '输入 rsso -q [id] 查询详情\n'+quickList.map((v,i)=>`${i+1}.${v.name}`).join('\n')
@@ -862,6 +882,9 @@ export function apply(ctx: Context, config: Config) {
          
       }
       if (options.remove) {
+        if(authority<config.basic.authority){
+          return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}`
+        }
         debug(`remove:${options.remove}`,'','info')
         let removeIndex = ((rssList.findIndex(i => i.rssId === +options.remove) + 1) ||
           (rssList.findIndex(i => i.url == options.remove) + 1) ||
@@ -876,11 +899,53 @@ export function apply(ctx: Context, config: Config) {
         return `已取消订阅：${removeItem.title}`
       }
       if (options?.removeAll != undefined) {
+        if(authority<config.basic.authority){
+          return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}\n需求权限等级:${config.basic.authority}`
+        }
         // debug(`removeAll:${rssList.length}`)
         debug(rssList,'','info')
         let rssLength = rssList.length
         await ctx.database.remove(('rssOwl' as any), { platform, guildId })
         return `已删除${rssLength}条`
+      }
+      if (options.follow) {
+        debug(`follow:${options.follow}`,'','info')
+        let followItem = findRssItem(rssList,options.follow)
+        if (!followItem) {
+          return `未找到${options.follow}`
+        }
+        let followers:any[] = followItem.followers
+        let followIndex = followers.findIndex(followId=>followId == author)
+        if(followIndex>-1){
+          followers.splice(followIndex,1)
+          await ctx.database.set(('rssOwl' as any), { id: followItem.id }, { followers })
+          return `取消关注：${followItem.title}`
+        }else{
+          followers.push(author)
+          await ctx.database.set(('rssOwl' as any), { id: followItem.id }, { followers })
+          return `关注订阅：${followItem.title}`
+        }
+      }
+      if (options?.followAll) {
+        if(authority<config.basic.advancedAuthority){
+          return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}\n需求权限等级:${config.basic.advancedAuthority}`
+        }
+        debug(`follow:${options.followAll}`,'','info')
+        let followItem = findRssItem(rssList,options.followAll)
+        if (!followItem) {
+          return `未找到${options.followAll}`
+        }
+        let followers:any[] = followItem.followers
+        let followIndex = followers.findIndex(followId=>followId == 'all')
+        if(followIndex>-1){
+          followers.splice(followIndex,1)
+          await ctx.database.set(('rssOwl' as any), { id: followItem.id }, { followers })
+          return `取消全体关注：${followItem.title}`
+        }else{
+          followers.push('all')
+          await ctx.database.set(('rssOwl' as any), { id: followItem.id }, { followers })
+          return `全体关注订阅：${followItem.title}`
+        }
       }
 
       if (options.pull) {
@@ -922,6 +987,24 @@ export function apply(ctx: Context, config: Config) {
         lastContent:{itemArray:[]},
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
         lastPubDate: 0
+      }
+      if(options.target){
+        if(authority<config.basic.advancedAuthority){
+          return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}\n需求权限等级:${config.basic.advancedAuthority}`
+        }
+        let targetGuildId = +options.target
+        if(!targetGuildId){
+          return "请输入群ID"
+        }
+        
+        subscribe.guildId = targetGuildId
+        const _rssList = await ctx.database.get(('rssOwl' as any), { platform, guildId:targetGuildId })
+        subscribe.rssId = (+_rssList.slice(-1)?.[0]?.rssId || 0) + 1
+
+      }
+
+      if(authority<config.basic.authority){
+        return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}\n需求权限等级:${config.basic.authority}`
       }
       
       if (options.test) {
