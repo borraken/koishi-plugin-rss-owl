@@ -23,7 +23,7 @@ declare module 'koishi' {
     rssId: number
     arg: rssArg,
     title: string
-    lastPubDate: number
+    lastPubDate: Date
   }
 }
 
@@ -98,7 +98,7 @@ export interface rss {
   arg: rssArg,
   title: string
   author: string
-  lastPubDate: number
+  lastPubDate: Date
 }
 export interface rssArg {
   template?: 'content' | 'only text' | 'only media' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
@@ -236,6 +236,7 @@ export function apply(ctx: Context, config: Config) {
   }
   const getImageUrl = async (url, arg,useBase64Mode=false) => {
     debug('imgUrl:'+url,'','details')
+    if(!url)return ''
     let res
     res = await $http(url, arg, { responseType: 'arraybuffer' })
     debug(res.data,'img response','details')
@@ -638,6 +639,10 @@ export function apply(ctx: Context, config: Config) {
       (rssList.findIndex(i => i.title.indexOf(keyword) + 1) + 1)) - 1
     return rssList[index]
   }
+  const getLastContent = (item)=>{
+    let arr = ['title','description','link','guid']
+    return Object.assign({},...arr.map(i=>clone(item?.[i]?{[i]:item[i]}:{})))
+  }
   const feeder = async () => {
     debug("feeder");
     const rssList = await ctx.database.get(('rssOwl' as any), {})
@@ -668,13 +673,9 @@ export function apply(ctx: Context, config: Config) {
               }else{return false}
             }))
           
-          const getLastContent = (item)=>{
-            let arr = ['title','description','link','guid']
-            return Object.assign({},...arr.map(i=>clone(item?.[i]?{[i]:item[i]}:{})))
-          }
           let lastContent = {itemArray:config.basic.resendUpdataContent==='all'?itemArray.map(getLastContent):config.basic.resendUpdataContent==='latest'? [getLastContent(itemArray[0])] :[]}
           
-          let lastPubDate = +new Date(itemArray[0].pubDate) || 0
+          let lastPubDate = new Date(itemArray[0].pubDate) || new Date(0)
           if (arg.reverse) {
             itemArray = itemArray.reverse()
           }
@@ -821,7 +822,7 @@ export function apply(ctx: Context, config: Config) {
     .usage('https://github.com/borraken/koishi-plugin-rss-owl')
     .option('list', '-l [content] 查看订阅列表(详情)')
     .option('remove', '-r <content> [订阅id|关键字] *删除订阅*')
-    .option('removeAll', '*全部删除订阅*')
+    .option('removeAll', '*删除全部订阅*')
     .option('follow', '-f <content> [订阅id|关键字] 关注订阅，在该订阅更新时提醒你')
     .option('followAll', '<content> [订阅id|关键字] **在该订阅更新时提醒所有人**')
     .option('target', '<content> [群组id] **跨群订阅**')
@@ -863,7 +864,10 @@ export function apply(ctx: Context, config: Config) {
         return "使用'rsso -l [id]'以查询详情 \nid:标题(最后更新)\n" + rssList.map(i => `${i.rssId}:${i.title || i.url} (${new Date(i.lastPubDate).toLocaleString('zh-CN')})`).join('\n')
       }
       if (options?.list) {
-        let rssObj = rssList.find(i=>i.rssId===parseInt(options?.list))||rssList.find(i=>new RegExp(options?.list).test(i.title))
+        let rssObj = findRssItem(rssList,options.list)
+        if (!rssObj) {
+          return `未找到${options.list}`
+        }
         if(!rssObj)return '未找到订阅。请输入"rsso -l"查询列表或"rsso -l [订阅id]"查询订阅详情'
         const showArgNameList = ['rssId','title','url','template','platform','guildId','author','merge','timeout','interval','forceLength','nextUpdataTime','maxRssItem','lastPubDate']
         const _rssArg = Object.assign(rssObj.arg,rssObj)
@@ -886,14 +890,11 @@ export function apply(ctx: Context, config: Config) {
           return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}`
         }
         debug(`remove:${options.remove}`,'','info')
-        let removeIndex = ((rssList.findIndex(i => i.rssId === +options.remove) + 1) ||
-          (rssList.findIndex(i => i.url == options.remove) + 1) ||
-          (rssList.findIndex(i => i.url.indexOf(options.remove) + 1) + 1) ||
-          (rssList.findIndex(i => i.title.indexOf(options.remove) + 1) + 1)) - 1
-        if (removeIndex == -1) {
+        
+        let removeItem = findRssItem(rssList,options.remove)
+        if (!removeItem) {
           return `未找到${options.remove}`
         }
-        let removeItem = rssList[removeIndex]
         debug(`remove:${removeItem}`,'','info')
         ctx.database.remove(('rssOwl' as any), { id: removeItem.id })
         return `已取消订阅：${removeItem.title}`
@@ -986,7 +987,7 @@ export function apply(ctx: Context, config: Config) {
         arg: optionArg,
         lastContent:{itemArray:[]},
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
-        lastPubDate: 0
+        lastPubDate: new Date(0)
       }
       if(options.target){
         if(authority<config.basic.advancedAuthority){
@@ -1043,9 +1044,11 @@ export function apply(ctx: Context, config: Config) {
         if (!(item.pubDate || optionArg.forceLength)) {
           return "RSS中未找到可用的pubDate，这将导致无法取得更新时间，请使用forceLength属性强制在每次更新时取得最新的订阅内容"
         }
-
+        
         subscribe.rssId =  (+(await ctx.database.get(('rssOwl' as any), { platform, guildId })).slice(-1)?.[0]?.rssId || 0) + 1
-        subscribe.lastPubDate = item.pubDate || subscribe.lastPubDate
+        subscribe.lastPubDate =  new Date(item.pubDate) || subscribe.lastPubDate
+        
+        subscribe.lastContent = {itemArray:config.basic.resendUpdataContent==='all'?rssItemList.flat(1).map(getLastContent):config.basic.resendUpdataContent==='latest'? [getLastContent(itemArray[0])] :[]}
         ctx.database.create(('rssOwl' as any), subscribe)
         // rssOwl.push(JSON.stringify(subscribe)) 
         if (arg.firstLoad) {
