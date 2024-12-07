@@ -42,9 +42,9 @@ rsso https://github.com/facebook/react/releases.atom
 rsso -t 订阅组名称 <url>|<url>|<url>...
 ```
 
-部分博客或论坛等网站也会主动提供RSS订阅链接，但部分格式的RSS链接可能因解析错误无法订阅
+部分博客或论坛等网站也会主动提供RSS订阅链接，但部分链接可能因解析错误无法订阅
 
-如果在订阅时出现报错等情况，请在确认链接能够正常打开并返回xml文本后提交issue
+如果在订阅时出现报错，内容无法显示等情况，请在确认链接能够正常打开并返回xml文本后提交issue
 
 部分订阅不提供pubDate，导致插件无法判断更新时间，你需要使用`--daily` 或`--arg refresh,forceLength` 以在固定时间获取固定数量的更新，或者用 `-p` 随时拉取最新的更新
 
@@ -182,9 +182,23 @@ rsso tg:woshadiao
 
 ### 5. 消息模板说明
 
-`content` ★ 可自定义的基础模板，可以完全展示所有内容，但容易刷屏
+消息模板可以在不同的订阅中获得合适的消息内容
 
-`text` 仅推送文字的模板
+模板分为基础模板和puppeteer(pptr)模板，后者需要启用puppeteer插件才可以正常使用
+
+基础模板将直接发送 文本/原始图片/原始视频 ，可以完全展示订阅内容，但有可能刷屏
+
+pptr模板将订阅内容渲染至无头浏览器并截图以生成输出内容，有效避免刷屏，并提供更多自定义空间，但图片会被压缩
+
+模板配置中bodyWidth，bodyFontSize等css样式参数，仅在default和description模板中生效
+
+custom模板的样式在custom配置内<body\>的style属性写入，也可以通过class属性配合<style\>写入
+
+例:`rsso -i text <url>`使用text模板订阅
+***
+`content` ★ 可自定义的基础模板，文字/图片/视频内容都会发出
+
+`text` 仅推送文字内容
 
 `media` 仅推送图片和视频
 
@@ -194,17 +208,13 @@ rsso tg:woshadiao
 
 `proto` 推送不经处理的description原始内容
 ***
-以下模板需要启用puppeteer插件才能正常使用
-***
-`default` ★ 最基础的pptr模板
+`default` ★ 基础的pptr模板
 
 `description` 仅包含description内容的pptr模板
 
 `custom` ★ 高度可定制化的pptr模板，默认添加了护眼背景色及订阅信息
 
 `link` 特殊模板，通过pptr对description内容中首个a标签网址访问并截图
-***
-例:`rsso -i text <url>`使用text模板订阅
 
 ### 6. 权限说明
 
@@ -216,23 +226,24 @@ rsso tg:woshadiao
 
 看这个 ->[怎么提升自己的权限（提权）](https://forum.koishi.xyz/t/topic/2034)<-
 
-简单来说，安装并启用`change-auth-callme`插件，发送`changeauth 5`
+省流，安装并启用`change-auth-callme`插件，发送`changeauth 5`
 
-或使用`auth`插件，进行帐号绑定
+或用默认自带的`auth`插件，进行帐号绑定
 
 提权完成后，权限会存入数据库，这时候就可以把插件关掉/卸载了
 
-koishi所有用户默认的权限都为1，你也可以将权限限制设为1以使用功能（不推荐）
+koishi默认的用户权限为1，也可以将权限限制设为1以使用功能（不推荐）
 
-##### todu
+##### todu?
 - [x] 稳定使用
-- [x] 快速订阅功能
-- [x] 视频本地转发功能
-- [x] 订阅详情查询
+- [x] 快速订阅
+- [x] 视频转发
+- [x] 订阅详情
 - [ ] auto模板
 - [ ] TTS
 - [ ] 按url合并请求
-- [ ] 对返回磁链的订阅自动下载压缩发送
+- [ ] download模板
+- [ ] 直接追踪网页更新
 
 ## 致谢:
 

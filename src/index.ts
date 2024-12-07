@@ -146,7 +146,7 @@ export const Config = Schema.object({
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
     margeVideo: Schema.boolean().default(false).description('以合并消息发送视频').experimental(),
     usePoster: Schema.boolean().default(false).description('加载视频封面').experimental(),
-    autoSplitImage: Schema.boolean().description('自动垂直拆分大尺寸图片以避免发送限制').default(true),
+    autoSplitImage: Schema.boolean().description('垂直拆分大尺寸图片，解决部分适配器发不出长图的问题').default(true),
     cacheDir: Schema.string().description('File模式时使用的缓存路径').default('data/cache/rssOwl'),
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
   }).description('基础设置'),
@@ -432,34 +432,42 @@ export function apply(ctx: Context, config: Config) {
     }
     let rssJson = x2js.xml2js(res)
     debug(rssJson,'rssJson','details');
-    if(rssJson.rss){
-      //rss
-      rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
-      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i, rss: rssJson.rss }))
-      return rssItemList
-    }else if(rssJson.feed){
-      //atom
-      let rss = {channel:{}}
-      let parseContent = (content)=>{
-        if(typeof content =='string')return content
-        if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
-        if(content['__text'])return content['__text']?.join?.("")||content['__text']
-        // debug(content,'未知ATOM订阅的content格式，请联系插件作者更新','info')
+    let parseContent = (content,attr=undefined)=>{
+      debug(content,'parseContent')
+      if(typeof content =='string')return content
+      if(attr&&content?.[attr])return parseContent(content?.[attr])
+      if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
+      if(content['__text'])return content['__text']?.join?.("")||content['__text']
+      // debug(content,'未知ATOM订阅的content格式，请联系插件作者更新','info')
+      if(Object.prototype.toString.call(content)==='[object Array]'){
+        return parseContent(content[0],attr)
+      }else if(Object.prototype.toString.call(content)==='[object Object]'){
         return Object.values(content).reduce((t:string,v:any)=>{
           if(v&&(typeof v =='string'||v?.join)){
             let text:string = v?.join("")||v
             return text.length > t.length ? text : t
           }else{return t}
         },'')
+      }else{
+        return content
       }
+    }
+    if(rssJson.rss){
+      //rss
+      rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
+      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i,guid:parseContent(i.guid), rss: rssJson.rss }))
+      return rssItemList
+    }else if(rssJson.feed){
+      //atom
+      let rss = {channel:{}}
       let item = rssJson.feed.entry.map(i=>({
         ...i,
-        title:i.title,
+        title:parseContent(i.title),
         description:parseContent(i.content),
-        link:i.link?.['_href']||i.link?.[0]?.['_href'],
-        guid:i.id,
-        pubDate:i.updated,
-        author:i.author[0]?.name||i.author?.name,
+        link:parseContent(i.link,'_href'),
+        guid:parseContent(i.id),
+        pubDate:parseContent(i.updated),
+        author:parseContent(i.author,'name'),
         // category:i,
         // comments:i,
         // enclosure:i,
@@ -476,6 +484,7 @@ export function apply(ctx: Context, config: Config) {
       }
       item = item.map(i=>({rss,...i}))
       debug(item,'atom item','details')
+      debug(item[0],'atom item2','details')
       return item
     }else{
       debug(rssJson,'未知rss格式，请提交issue','error')
@@ -689,8 +698,11 @@ export function apply(ctx: Context, config: Config) {
             messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           } else {
             rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)||rssItem.lastContent?.itemArray?.some(oldRssItem=>{
-              if(!(oldRssItem?.guid?(oldRssItem.guid===v.guid):(oldRssItem.link===v.link&&oldRssItem.title===v.title)))return false
-              return oldRssItem.description!==v.description
+              let newItem = lastContent.itemArray.find(i=>i.guid?(i.guid==oldRssItem.guid):(i.link==oldRssItem.link&&i.title==oldRssItem.title))
+              if(!newItem)return false
+              debug(oldRssItem,'oldRssItem','details')
+              debug(newItem,'newItem','details')
+              return JSON.stringify(oldRssItem.description)!==JSON.stringify(newItem.description)
             })).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
             debug(`${JSON.stringify(rssItem)}:共${rssItemArray.length}条新信息`,'','info');
