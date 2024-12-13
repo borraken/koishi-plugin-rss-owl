@@ -39,7 +39,7 @@ const debugLevel = ["disable","error","info","details"]
 interface BasicConfig {
   usePoster: boolean;
   margeVideo: boolean;
-  defaultTemplate?: 'content' | 'only text' | 'only media' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
+  defaultTemplate?: 'auto' | 'content' | 'only text' | 'only media' | 'only image' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   timeout?: number
   refresh?: number
   merge?: '不合并' | '有多条更新时合并' | '一直合并'
@@ -64,6 +64,8 @@ interface TemplateConfig {
   bodyFontSize?: number
   content?: string
   custom?: string
+  customTemplate:any[]
+
 }
 
 interface NetConfig {
@@ -81,6 +83,7 @@ interface MsgConfig {
 
 interface proxyAgent {
   enabled?: boolean
+  autoUseProxy?: boolean
   protocol?: string
   host?: string,
   port?: number
@@ -101,7 +104,7 @@ export interface rss {
   lastPubDate: Date
 }
 export interface rssArg {
-  template?: 'content' | 'only text' | 'only media' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
+  template?: 'auto' | 'content' | 'only text' | 'only media' | 'only image' | 'only video' | 'proto' | 'default' | 'only description' | 'custom' | 'link'
   content: string | never
 
   forceLength?: number
@@ -126,11 +129,11 @@ export interface rssArg {
   nextUpdataTime?: number
 }
 // export const usage = ``
-const templateList = ['content', 'only text', 'only media','only image', 'only video', 'proto', 'default', 'only description', 'custom','link']
+const templateList = ['auto','content', 'only text', 'only media','only image', 'only video', 'proto', 'default', 'only description', 'custom','link']
 
 export const Config = Schema.object({
   basic: Schema.object({
-    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`content\` ★ 可自定义的基础模板，适用于内容较少的订阅，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only media\` 仅推送图片和视频，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` ★ puppeteer模板，适用于大部分订阅<br>\`only description\` puppeteer模板，仅包含description内容<br>\`custom\` ★ 在default模板基础上添加了护眼的背景色及订阅信息，见下方模板设置<br>\`link\` 特殊puppeteer模板，截图内容中首个a标签网址的页面<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
+    defaultTemplate: Schema.union(templateList).description('默认消息解析模板 <br> \`auto\` ★ 当文字长度小于`300`时使用content，否则custom<br> \`content\` ★ 可自定义的基础模板，适用于文字较少的订阅，无需puppeteer<br>\`only text\` 仅推送文字，无需puppeteer<br>\`only media\` 仅推送图片和视频，无需puppeteer<br>\`only image\` 仅推送图片，无需puppeteer<br>\`only video\` 仅推送视频，无需puppeteer<br>\`proto\` 推送原始内容，无需puppeteer<br>\`default\` ★ 内置基础puppeteer模板<br>\`only description\` 内置puppeteer模板，仅包含description内容<br>\`custom\` ★ 可自定义puppeteer模板，添加了护眼的背景色及订阅信息，见下方模板设置<br>\`link\` 特殊puppeteer模板，截图内容中首个a标签网址的页面<br>在订阅时使用自定义配置时无需only字段，例:`rsso -i text <url>`使用only text模板')
       .default('content'),
     timeout: Schema.number().description('请求数据的最长时间（秒）').default(60),
     refresh: Schema.number().description('刷新订阅源的时间间隔（秒）').default(600),
@@ -169,13 +172,20 @@ export const Config = Schema.object({
           <div>{{description}}</div>
       </div>
   </body>`).description('custom模板的内容，使用插值载入推送内容。 [说明](https://github.com/borraken/koishi-plugin-rss-owl?tab=readme-ov-file#3-%E6%8F%92%E5%80%BC%E8%AF%B4%E6%98%8E)'),
-  customRemark: Schema.string().role('textarea', { rows: [3, 2] }).default(`{{description}}`).description('custom模板的文字补充，以custom图片作为description再次插值'),
+    customRemark: Schema.string().role('textarea', { rows: [3, 2] }).default(`{{description}}\n{{link}}`).description('custom模板的文字补充，以custom图片作为description再次插值'),
+    // customTemplate:Schema.array(Schema.object({
+    //   name: Schema.string().description('模板名称'),
+    //   pptr: Schema.boolean().description('是否pptr模板'),
+    //   content: Schema.string().description('模板内容').default(`{{description}}`).role('textarea'),
+    //   remark: Schema.string().description('模板补充内容').default(`{{description}}`).role('textarea'),
+    // })).description('自定义新模板'),
   }).description('模板设置'),
   net: Schema.object({
     proxyAgent: Schema.intersect([
       Schema.object({ enabled: Schema.boolean().default(false).description('使用代理'), }),
       Schema.union([Schema.object({
         enabled: Schema.const(true).required(),
+        autoUseProxy: Schema.boolean().default(false).description('新订阅自动判断代理').experimental(),
         protocol: Schema.union(['http', 'https', 'socks5']).default('http'),
         host: Schema.string().role('link').default('127.0.0.1'),
         port: Schema.number().default(7890),
@@ -245,7 +255,6 @@ export function apply(ctx: Context, config: Config) {
     let base64Prefix = `data:${prefix};base64,`
     let base64Data = base64Prefix + Buffer.from(res.data, 'binary').toString('base64')
     if (config.basic.imageMode == 'base64'||useBase64Mode) {
-      // console.log(base64Img);
       return base64Data
     } else if (config.basic.imageMode == 'File') {
       let fileUrl = await writeCacheFile(base64Data)
@@ -275,39 +284,34 @@ export function apply(ctx: Context, config: Config) {
   const puppeteerToFile = async (puppeteer: string) => {
     let base64 = /(?<=src=").+?(?=")/.exec(puppeteer)[0]
     const buffer = Buffer.from(base64.substring(base64.indexOf(',') + 1), 'base64');
-    // console.log("Byte length: " + buffer.length);
     const MB = buffer.length / 1e+6
     debug("MB: " + MB,'file size','details');
     return `<file src="${await writeCacheFile(base64)}"/>`
   }
   const quickList = [
-    {prefix:"rss",name:"rsshub通用订阅",detail:"rsshub通用快速订阅，用于快速写入及通过配置动态更换rsshub地址",explain:"rss:param1/param2/...",example:"rss:apnews/rss/business",argLength:[1,9],replace:"$1$2$3$4$5$6$7$8$9"},
-    {prefix:"tg",name:"电报频道",detail:"输入电报频道信息中的链接地址最后部分，部分不提供网页预览的频道无法订阅",explain:"tg:[:channel_name]",example:"tg:woshadiao",argLength:[1,1],replace:"/telegram/channel$1"},
-    {prefix:"mp-tag",name:"微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，浏览器打开Tag文章列表，如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入__biz和album_id",explain:"mp-tag:[:__biz]/[:album_id]",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",argLength:[2,2],replace:"/wechat/mp/msgalbum$1$2"},
-    {prefix:"gh",name:"github相关",detail:"Repo Issue:gh:issue/[:user]/[:repo]/[:state?(open|closed|all)]/[:labels?(open|bug|...)]\nRepo Stars:gh:stars/[:user]/[:repo]\nTrending:gh:trending/[:since(daliy|weekly|monthly)]/[:language?(javascript|c#|c++|...)]/[:spoken_language?(English|Chinese|...)]\nUser Activities:gh:activity/[:user]",explain:"gh:[type]/[param1]/[param2]...",example:"gh:issue/koishijs/koishi/open",argLength:[2,5],replace:"/github$1$2$3$4$5"},
-    // {prefix:"weibo",name:"微博博主",detail:"输入博主用户id",explain:"weibo:[:uid]",example:"weibo:1195230310",argLength:[1,2],replace:"/weibo/user$1$2$3$4$5"},
+    {prefix:"rss",name:"rsshub通用订阅",detail:"rsshub通用快速订阅\nhttps://docs.rsshub.app/zh/routes/new-media#%E6%97%A9%E6%8A%A5%E7%BD%91",example:"rss:qqorw",replace:"{{rsshub}}/{{route}}"},
+    {prefix:"tg",name:"rsshub电报频道订阅",detail:"输入电报频道信息中的链接地址最后部分，需要该频道启用网页预览\nhttps://docs.rsshub.app/zh/routes/social-media#telegram",example:"tg:woshadiao",replace:"{{rsshub}}/telegram/channel/{{route}}"},
+    {prefix:"mp-tag",name:"rsshub微信公众平台话题TAG",detail:"一些公众号（如看理想）会在微信文章里添加 Tag，浏览器打开Tag文章列表，如 https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzA3MDM3NjE5NQ==&action=getalbum&album_id=1375870284640911361，输入其中biz和album_id\nhttps://docs.rsshub.app/zh/routes/new-media#%E5%85%AC%E4%BC%97%E5%8F%B7%E6%96%87%E7%AB%A0%E8%AF%9D%E9%A2%98-tag",example:"mp-tag:MzA3MDM3NjE5NQ==/1375870284640911361",replace:"{{rsshub}}/wechat/mp/msgalbum/{{route}}"},
+    {prefix:"gh",name:"rsshub-github订阅",detail:"Repo Issue: gh:issue/[:user]/[:repo]/[:state?(open|closed|all)]/[:labels?(open|bug|...)]\nUser Activities: gh:activity/[:user]\nhttps://docs.rsshub.app/zh/routes/popular#github",example:"gh:issue/koishijs/koishi/open",replace:"{{rsshub}}/github/{{route}}"},
+    {prefix:"github",name:"原生github订阅(含releases,commits,activity)",detail:"Repo Releases: github::[:owner]/[:repo]/releases\nRepo commits: github:[:owner]/[:repo]/commits\nUser activities:github:[:user]\n",example:"github:facebook/react/releases",replace:"https://github.com/{{route}}.atom"},
+    // {prefix:"weibo",name:"微博博主",detail:"输入博主用户id\n公开订阅源对微博支持欠佳，建议自己部署并配置Cookie",example:"weibo:1195230310",replace:"{{rsshub}}/weibo/user/{{route}}"},
+    {prefix:"koishi",name:"koishi论坛相关",detail:"最新话题: koishi:latest\n类别: koishi:c/plugin-publish (插件发布)\n话题 koishi:u/shigma/activity\n基于discourse论坛的feed订阅，更多见: https://meta.discourse.org/t/finding-discourse-rss-feeds/264134 或可尝试在网址后面加上 .rss ",example:"koishi:latest",replace:"https://forum.koishi.xyz/{{route}}.rss"},
   ]
   const parseQuickUrl = (url)=>{
+    // const _quickList = [...quickList,...config.]
     let correntQuickObj = quickList.find(i=>new RegExp(`^${i.prefix}:`).test(url))
     if(!correntQuickObj)return url
-    let params = url.match(new RegExp(`(?<=^${correntQuickObj.prefix}:).*`))[0].split("/")
-    if(params.length<correntQuickObj.argLength[0]||params.length>correntQuickObj.argLength[1]){
-      throw new Error("amount of params is wrong")
-    }
-    let rUrl = correntQuickObj.replace.replace(/\$\d/g,v=>{
-      let index = +(v.match(/\$(.*)/)[1])-1
-      return params[index]?`/${params[index]}`:""
-    })
-    debug(config.msg.rssHubUrl + rUrl,'quickUrl return','details')
-    return config.msg.rssHubUrl + rUrl
+    let rsshub = config.msg.rssHubUrl
+    let route = url.match(new RegExp(`(?<=^${correntQuickObj.prefix}:).*`))[0]
+    const parseContent = (template,item)=>template.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split("|").reduce((t,v)=>t||v.match(/^'(.*)'$/)?.[1]||v.split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item),''))
+    let rUrl = parseContent(correntQuickObj.replace,{rsshub,route})
+    return rUrl
   }
   const getCacheDir = () => {
     let dir = config.basic.cacheDir ? path.resolve('./', config.basic.cacheDir || "") : `${__dirname}/cache`
     let mkdir = (path,deep=2)=>{
       let dir = path.split("\\").splice(0,deep).join("\\")
       let dirDeep = path.split("\\").length
-      console.log(dir,dirDeep);
-      
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir);
       }
@@ -329,8 +333,6 @@ export function apply(ctx: Context, config: Config) {
     }
     let base64Data = fileUrl.replace(/^data:.+?;base64,/, "");
     let path = `${cacheDir}/${fileName}`
-    debug(path,'path','details')
-
     fs.writeFileSync(path, base64Data, 'base64')
     if (config.basic.replaceDir) {
       return `file:///${config.basic.replaceDir}/${fileName}`
@@ -434,6 +436,7 @@ export function apply(ctx: Context, config: Config) {
     debug(rssJson,'rssJson','details');
     let parseContent = (content,attr=undefined)=>{
       debug(content,'parseContent')
+      if(!content)return undefined
       if(typeof content =='string')return content
       if(attr&&content?.[attr])return parseContent(content?.[attr])
       if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
@@ -455,7 +458,7 @@ export function apply(ctx: Context, config: Config) {
     if(rssJson.rss){
       //rss
       rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
-      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i,guid:parseContent(i.guid), rss: rssJson.rss }))
+      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i,guid:parseContent(i?.guid), rss: rssJson.rss }))
       return rssItemList
     }else if(rssJson.feed){
       //atom
@@ -509,8 +512,12 @@ export function apply(ctx: Context, config: Config) {
     const parseContent = (template,item)=>template.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split("|").reduce((t,v)=>t||v.match(/^'(.*)'$/)?.[1]||v.split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item),''))
     if(config.basic.videoMode==='filter'){
       html = cheerio.load(item.description)
-      html('video').length > 0
-      return ''
+      if(html('video').length > 0) return ''
+    }
+    html = cheerio.load(item.description)
+    if(template=='auto'){
+      let stringLength = html.text().length
+      template = stringLength<300?'content':'custom'
     }
     if (template == "custom") {
       // description = config.template.custom.replace(/{{(.+?)}}/g, i =>i.match(/^{{(.*)}}$/)[1].split(".").reduce((t, v) => new RegExp("Date").test(v) ? new Date(t?.[v]).toLocaleString('zh-CN') : t?.[v] || "", item))
@@ -657,7 +664,6 @@ export function apply(ctx: Context, config: Config) {
     const rssList = await ctx.database.get(('rssOwl' as any), {})
     debug(rssList,'rssList','info');
     for (const rssItem of rssList) {
-      // console.log(`${rssItem.platform}:${rssItem.guildId}`);
       try {
         let arg: rssArg = mixinArg(rssItem.arg || {})
         debug(arg,'arg','details')
@@ -813,7 +819,7 @@ export function apply(ctx: Context, config: Config) {
     block:[...config.msg.keywordBlock,...(arg?.block||[])],
     // readCDATA: arg.CDATA??config.msg.readCDATA,
     template: arg.template ?? config.basic.defaultTemplate,
-    proxyAgent: arg?.proxyAgent ? (arg.proxyAgent?.enabled ? arg.proxyAgent : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
+    proxyAgent: arg?.proxyAgent ? (arg.proxyAgent?.enabled ? (arg.proxyAgent?.host?arg.proxyAgent:{ ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} }) : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
   })
   ctx.on('ready', async () => {
     // await ctx.broadcast([`sandbox:rdbvu1xb9nn:#`], '123')
@@ -839,7 +845,7 @@ export function apply(ctx: Context, config: Config) {
     .option('followAll', '<content> [订阅id|关键字] **在该订阅更新时提醒所有人**')
     .option('target', '<content> [群组id] **跨群订阅**')
     .option('arg', '-a <content> 自定义配置')
-    .option('template', '-i <content> 消息模板,例:-i custom')
+    .option('template', '-i <content> 消息模板[content(文字模板)|default(图片模板)],更多见readme')
     .option('title', '-t <content> 自定义命名')
     .option('pull', '-p <content> [订阅id|关键字]拉取订阅id最后更新')
     .option('force', '强行写入')
@@ -856,13 +862,14 @@ export function apply(ctx: Context, config: Config) {
       const { id: author } = session.event.user as any
       const { authority } = session.user as any
       
+      
       debug(`${platform}:${author}:${guildId}`,'','info')
       if (options?.quick==='') {
         return '输入 rsso -q [id] 查询详情\n'+quickList.map((v,i)=>`${i+1}.${v.name}`).join('\n')
       }
       if (options?.quick) {
         let correntQuickObj = quickList[parseInt(options?.quick)-1]
-        return `${correntQuickObj.name}\n${correntQuickObj.detail}\n${correntQuickObj.explain}\n例:rsso -T ${correntQuickObj.example}`
+        return `${correntQuickObj.name}\n${correntQuickObj.detail}\n例:rsso -T ${correntQuickObj.example}\n(${parseQuickUrl(correntQuickObj.example)})`
       }
       if ((platform.indexOf("sandbox") + 1) && !options.test && url) {
         session.send('沙盒中无法推送更新，但RSS依然会被订阅，建议使用 -T 选项进行测试')
@@ -999,7 +1006,7 @@ export function apply(ctx: Context, config: Config) {
         arg: optionArg,
         lastContent:{itemArray:[]},
         title: options.title || (urlList.length > 1 && `订阅组:${new Date().toLocaleString('zh-CN')}`) || "",
-        lastPubDate: new Date(0)
+        lastPubDate: new Date()
       }
       if(options.target){
         if(authority<config.basic.advancedAuthority){
@@ -1019,19 +1026,32 @@ export function apply(ctx: Context, config: Config) {
       if(authority<config.basic.authority){
         return `权限不足，请联系管理员提权\n平台名:${platform}\n帐号:${author}\n当前权限等级:${authority}\n需求权限等级:${config.basic.authority}`
       }
-      
       if (options.test) {
         debug(`test:${url}`,'','info')
         debug({ guildId, platform, author, arg, optionArg },'','info')
-        if (!url) return '请输入URL'
-        let rssItemList = await Promise.all(urlList
-          .map(async url => await getRssData(url, arg)))
-        let itemArray = rssItemList
-          .flat(1)
-          .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
-        let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
-        let messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, {...subscribe,...arg}, author)))).flat(Infinity)
-        return `<message forward>${messageList.join('')}</message>`
+        try {
+          if (!url) return '请输入URL'
+          let rssItemList
+          try {
+            rssItemList = await Promise.all(urlList
+              .map(async url => await getRssData(url, arg)))
+          } catch (error) {
+            throw new Error(`订阅源请求失败:${error}\n请检查url是否可用:${urlList.map(i=>parseQuickUrl(i)).join()}`)
+          }
+          let itemArray = rssItemList
+            .flat(1)
+            .sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
+          let rssItemArray = itemArray.filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1)).filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
+          let messageList
+          try {
+            messageList = (await Promise.all(rssItemArray.reverse().map(async i => await parseRssItem(i, {...subscribe,...arg}, author)))).flat(Infinity)
+          } catch (error) {
+            throw new Error(`订阅内容请求失败:${error}`)
+          }
+          return `<message forward>${messageList.join('')}</message>`
+        } catch (error) {
+          return `error:${error}`
+        }
       }
       if (config.basic.urlDeduplication && (rssList.findIndex(i => i.url == url) + 1)) {
         return '已订阅此链接。'
@@ -1047,7 +1067,17 @@ export function apply(ctx: Context, config: Config) {
       }
       try {
         if (!url) return '请输入URL'
-        let rssItemList = await Promise.all(urlList.map(async url => await getRssData(url, arg)))
+        let rssItemList
+        if(config.net.proxyAgent.autoUseProxy&&optionArg?.proxyAgent?.enabled===undefined){
+          try {
+            rssItemList = await Promise.all(urlList.map(async url => await getRssData(url, {...arg,proxyAgent:{enabled:false}})))
+          } catch (error) {
+            optionArg.proxyAgent = {enabled:true}
+            rssItemList = await Promise.all(urlList.map(async url => await getRssData(url, arg)))
+          }
+        }else{
+          rssItemList = await Promise.all(urlList.map(async url => await getRssData(url, arg)))
+        }
         let itemArray = rssItemList.flat(1).sort((a, b) => +new Date(b.pubDate) - +new Date(a.pubDate))
         .filter((v, i) => arg.forceLength ? (i < arg.forceLength) : (i < 1))
         .filter((v, i) => arg.maxRssItem ? (i < arg.maxRssItem) : true)
@@ -1061,18 +1091,22 @@ export function apply(ctx: Context, config: Config) {
         subscribe.lastPubDate =  new Date(item.pubDate) || subscribe.lastPubDate
         
         subscribe.lastContent = {itemArray:config.basic.resendUpdataContent==='all'?rssItemList.flat(1).map(getLastContent):config.basic.resendUpdataContent==='latest'? [getLastContent(itemArray[0])] :[]}
-        ctx.database.create(('rssOwl' as any), subscribe)
-        // rssOwl.push(JSON.stringify(subscribe)) 
-        if (arg.firstLoad) {
-          if (arg.forceLength) {
-            let messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg}, item.author)))
-            let message = item.arg.merge ? `<message forward><author id="${item.author}"/>${messageList.join("")}</message>` : messageList.join("")
-            return message
-          } else {
-            return `<message>添加订阅成功</message>${await parseRssItem(item, {...subscribe,...arg}, author)}`
+        itemArray = arg.forceLength?itemArray:[itemArray[0]]
+        let messageList
+        if(config.net.proxyAgent.autoUseProxy&&optionArg?.proxyAgent?.enabled===undefined){
+          try {
+            messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg,proxyAgent:{enabled:false}}, item.author)))
+            optionArg.proxyAgent = {enabled:false}
+          } catch (error) {
+            messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg}, item.author)))
+            optionArg.proxyAgent = {enabled:true}
           }
+          subscribe.arg= optionArg
+        }else{
+          messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg}, item.author)))
         }
-        return '添加订阅成功'
+        ctx.database.create(('rssOwl' as any), subscribe)
+        return arg.firstLoad?(`<message>添加订阅成功</message>${arg.merge ? `<message forward><author id="${item.author}"/>${messageList.join("")}</message>` : messageList.join("")}`):'添加订阅成功'
       } catch (error) {
         debug(error,'添加失败','error')
         return `添加失败:${error}`
