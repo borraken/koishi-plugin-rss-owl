@@ -143,12 +143,11 @@ export const Config = Schema.object({
     maxRssItem: Schema.number().description('限制更新时的最大推送数量上限，超出上限时较早的更新会被忽略').default(10),
     firstLoad: Schema.boolean().description('首次订阅时是否发送最后的更新').default(true),
     urlDeduplication: Schema.boolean().description('同群组中不允许重复添加相同订阅').default(true),
-    // sendRequire: Schema.boolean().default(true).description('验证发送').experimental(),
     resendUpdataContent: Schema.union(['disable','latest','all']).description('当内容更新时再次发送').default('disable').experimental(),
     imageMode: Schema.union(['base64', 'File']).description('图片发送模式，使用File可以解决部分图片无法发送的问题，但无法在沙盒中使用').default('base64'),
     videoMode: Schema.union(['filter','href','base64', 'File']).description('视频发送模式（iframe标签内的视频无法处理）<br> \`filter\` 过滤视频，含有视频的推送将不会被发送<br> \`href\` 使用视频网络地址直接发送<br> \`base64\` 下载后以base64格式发送<br> \`File\` 下载后以文件发送').default('href'),
-    margeVideo: Schema.boolean().default(false).description('以合并消息发送视频').experimental(),
-    usePoster: Schema.boolean().default(false).description('加载视频封面').experimental(),
+    margeVideo: Schema.boolean().default(false).description('以合并消息发送视频'),
+    usePoster: Schema.boolean().default(false).description('加载视频封面'),
     autoSplitImage: Schema.boolean().description('垂直拆分大尺寸图片，解决部分适配器发不出长图的问题').default(true),
     cacheDir: Schema.string().description('File模式时使用的缓存路径').default('data/cache/rssOwl'),
     replaceDir: Schema.string().description('缓存替换路径，仅在使用docker部署时需要设置').default(''),
@@ -206,8 +205,7 @@ export const Config = Schema.object({
     keywordFilter: Schema.array(Schema.string()).role('table').description('关键字过滤，使用正则检查title和description中的关键字，含有关键字的推送不会发出，不区分大小写').default([]),
     keywordBlock: Schema.array(Schema.string()).role('table').description('关键字屏蔽，内容中的正则关键字会被删除，不区分大小写').default([]),
     blockString:Schema.string().description('关键字屏蔽替换内容').default('*'),
-    // readCDATA: Schema.boolean().description('读取CDATA中内容，CDATA本意是需要被XML解析器忽略的内容，但部分订阅会将有效内容放入，除非必须，否则不建议开启，建议在订阅时使用`-a CDATA:true`以局部启用，开启后可能导致非预期的错误').default(false).experimental(),
-    censor: Schema.boolean().description('消息审查，需要censor服务').default(false).experimental(),
+    censor: Schema.boolean().description('消息审查，需要censor服务').default(false),
   }).description('消息处理'),
   // customUrlEnable:Schema.boolean().description('开发中：允许使用自定义规则对网页进行提取，用于对非RSS链接抓取').default(false).experimental(),
   debug: Schema.union(debugLevel).default(debugLevel[0]),
@@ -657,7 +655,8 @@ export function apply(ctx: Context, config: Config) {
   }
   const getLastContent = (item)=>{
     let arr = ['title','description','link','guid']
-    return Object.assign({},...arr.map(i=>clone(item?.[i]?{[i]:item[i]}:{})))
+    let obj = Object.assign({},...arr.map(i=>clone(item?.[i]?{[i]:item[i]}:{})))
+    return {...obj,description:String(obj?.description).replaceAll(/\s/g,'')}
   }
   const feeder = async () => {
     debug("feeder");
@@ -704,10 +703,13 @@ export function apply(ctx: Context, config: Config) {
             messageList = await Promise.all(itemArray.filter((v, i) => i < arg.forceLength).map(async i => await parseRssItem(i, {...rssItem,...arg}, rssItem.author)))
           } else {
             rssItemArray = itemArray.filter((v, i) => (+new Date(v.pubDate) > rssItem.lastPubDate)||rssItem.lastContent?.itemArray?.some(oldRssItem=>{
-              let newItem = lastContent.itemArray.find(i=>i.guid?(i.guid==oldRssItem.guid):(i.link==oldRssItem.link&&i.title==oldRssItem.title))
-              if(!newItem)return false
-              debug(oldRssItem,'oldRssItem','details')
-              debug(newItem,'newItem','details')
+              if(config.basic.resendUpdataContent==='disable')return false
+              let newItem = getLastContent(v)
+              let isSame = newItem.guid?newItem.guid===oldRssItem.guid:(newItem.link===oldRssItem.link&&newItem.title===oldRssItem.title)
+              // let newItem = lastContent.itemArray.find(i=>i.guid?(i.guid==oldRssItem.guid):(i.link==oldRssItem.link&&i.title==oldRssItem.title))
+              if(!isSame)return false
+              debug(JSON.stringify(oldRssItem.description),'oldRssItem','details')
+              debug(JSON.stringify(newItem.description),'newItem','details')
               return JSON.stringify(oldRssItem.description)!==JSON.stringify(newItem.description)
             })).filter((v, i) => !arg.maxRssItem || i < arg.maxRssItem)
             if (!rssItemArray.length) continue
@@ -734,13 +736,12 @@ export function apply(ctx: Context, config: Config) {
           if(rssItem.followers.length){
             message += `<message>${rssItem.followers.map(followId=>`<at ${followId=='all'?'type':'id'}='${followId}'/>` )}</message>`
           }
-          debug(await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message),'broadcast return','info')
-          
-          debug(lastPubDate,'lastPubDate','info')
+          const broadcast = await ctx.broadcast([`${rssItem.platform}:${rssItem.guildId}`], message)
+          if(!broadcast[0])throw new Error('发送失败')
           await ctx.database.set(('rssOwl' as any), { id: rssItem.id }, { lastPubDate,arg:originalArg,lastContent })
           debug(`更新成功:${rssItem.title}`,'','info')
         } catch (error) {
-          debug(error,`更新失败:${JSON.stringify(rssItem)}`,'error')
+          debug(error,`更新失败:${JSON.stringify({...rssItem,lastContent:"..."})}`,'error')
         }
         
       } catch (error) {
@@ -849,7 +850,7 @@ export function apply(ctx: Context, config: Config) {
     .option('title', '-t <content> 自定义命名')
     .option('pull', '-p <content> [订阅id|关键字]拉取订阅id最后更新')
     .option('force', '强行写入')
-    // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取')
+    // .option('rule', '-u <ruleObject:object> 订阅规则，用于对非RSS链接的内容提取') 
     .option('daily', '-d <content>')
     .option('test', '-T 测试')
     .option('quick', '-q [content] 查询快速订阅列表')
@@ -861,7 +862,6 @@ export function apply(ctx: Context, config: Config) {
       const { platform } = session.event as any
       const { id: author } = session.event.user as any
       const { authority } = session.user as any
-      
       
       debug(`${platform}:${author}:${guildId}`,'','info')
       if (options?.quick==='') {
@@ -1093,7 +1093,7 @@ export function apply(ctx: Context, config: Config) {
         subscribe.lastContent = {itemArray:config.basic.resendUpdataContent==='all'?rssItemList.flat(1).map(getLastContent):config.basic.resendUpdataContent==='latest'? [getLastContent(itemArray[0])] :[]}
         itemArray = arg.forceLength?itemArray:[itemArray[0]]
         let messageList
-        if(config.net.proxyAgent.autoUseProxy&&optionArg?.proxyAgent?.enabled===undefined){
+        if(config.net.proxyAgent.autoUseProxy&&optionArg?.proxyAgent?.enabled===undefined&&!optionArg.proxyAgent){
           try {
             messageList = await Promise.all(itemArray.map(async () => await parseRssItem(item, {...subscribe,...arg,proxyAgent:{enabled:false}}, item.author)))
             optionArg.proxyAgent = {enabled:false}
