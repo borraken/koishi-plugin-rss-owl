@@ -340,10 +340,17 @@ export function apply(ctx: Context, config: Config) {
   }
   const delCache = async () => {
     const cacheDir = getCacheDir()
-    fs.readdirSync(cacheDir).forEach(file => {
-      if(!!path.extname(file))fs.unlinkSync(path.join(cacheDir, file))
-    })
-    return
+    const files = fs.readdirSync(cacheDir)
+  
+    // 并行删除文件
+    await Promise.all(
+      files
+        .filter(file => !!path.extname(file)) // 只处理有扩展名的文件
+        .map(file => {
+          const filePath = path.join(cacheDir, file)
+          return fs.promises.unlink(filePath) // 使用 promises API
+        })
+    )
   }
   const sleep = (delay = 1000) => new Promise(resolve => setTimeout(resolve, delay));
   let maxRequestLimit = 1
@@ -398,28 +405,55 @@ export function apply(ctx: Context, config: Config) {
   }
   const renderHtml2Image = async (htmlContent:string)=>{
     let page = await ctx.puppeteer.page()
-    //截图
-    debug(htmlContent,'htmlContent','details')
-    await page.setContent(htmlContent)
-    if(!config.basic.autoSplitImage)return h.image(await page.screenshot({type:"png"}),'image/png') 
-    let [height,width,x,y] = await page.evaluate(()=>[document.body.offsetHeight,document.body.offsetWidth,parseInt(document.defaultView.getComputedStyle(document.body).marginLeft)||0,parseInt(document.defaultView.getComputedStyle(document.body).marginTop)||0])
-    let size = 10000
-    debug([height,width,x,y],'pptr img size','details')
-    const split = Math.ceil(height/size)
-    if(!split)return h.image(await page.screenshot({type:"png",clip:{x,y,width,height}}),'image/png')
-    debug({height,width,split},'split img','details')
-    const reduceY =(index) =>{
-      let y = Math.floor(height/split*index)
-      return y
-      // return index?(y-100):y
+    try {
+      debug(htmlContent,'htmlContent','details')
+      await page.setContent(htmlContent)
+      
+      if(!config.basic.autoSplitImage) {
+        const image = await page.screenshot({type:"png"})
+        return h.image(image,'image/png')
+      }
+      
+      let [height,width,x,y] = await page.evaluate(()=>[
+        document.body.offsetHeight,
+        document.body.offsetWidth,
+        parseInt(document.defaultView.getComputedStyle(document.body).marginLeft)||0,
+        parseInt(document.defaultView.getComputedStyle(document.body).marginTop)||0
+      ])
+      
+      let size = 10000
+      debug([height,width,x,y],'pptr img size','details')
+      const split = Math.ceil(height/size)
+      
+      if(!split) {
+        const image = await page.screenshot({type:"png",clip:{x,y,width,height}})
+        return h.image(image,'image/png')
+      }
+      
+      debug({height,width,split},'split img','details')
+      
+      const reduceY = (index) => Math.floor(height/split*index)
+      const reduceHeight = (index) => Math.floor(height/split)
+      
+      let imgData = await Promise.all(
+        Array.from({length:split}, async(v,i) => 
+          await page.screenshot({
+            type:"png",
+            clip:{
+              x,
+              y:reduceY(i)+y,
+              width,
+              height:reduceHeight(i)
+            }
+          })
+        )
+      )
+      
+      return imgData.map(i=>h.image(i,'image/png')).join("")
+      
+    } finally {
+      await page.close() // 确保页面被关闭
     }
-    const reduceHeight =(index) =>{
-      let h = Math.floor(height/split)
-      return h
-      // return (index==(split-1))?h:(h+100)
-    }
-    let imgData = await Promise.all(Array.from({length:split},async(v,i)=>await page.screenshot({type:"png",clip:{x,y:reduceY(i)+y,width,height:reduceHeight(i)}})))
-    return imgData.map(i=>h.image(i,'image/png')).join("")
   }
   const getRssData = async (url, config:rssArg) => {
     // let rssXML = await fetch(url)
@@ -662,15 +696,16 @@ export function apply(ctx: Context, config: Config) {
     debug("feeder");
     const rssList = await ctx.database.get(('rssOwl' as any), {})
     debug(rssList,'rssList','info');
+    
     for (const rssItem of rssList) {
       try {
         let arg: rssArg = mixinArg(rssItem.arg || {})
         debug(arg,'arg','details')
         debug(rssItem.arg,'originalArg','details')
-        let originalArg
+        let originalArg = clone(rssItem.arg || {})
+        
         if (rssItem.arg.interval) {
           if (arg.nextUpdataTime > +new Date()) continue
-          // arg.nextUpdataTime = arg.nextUpdataTime + arg.refresh
           originalArg.nextUpdataTime = arg.nextUpdataTime + arg.interval*Math.ceil((+new Date() - arg.nextUpdataTime)/arg.interval)
         }
         try {
@@ -827,8 +862,11 @@ export function apply(ctx: Context, config: Config) {
     // await sendMessageToChannel(ctx,{platform:"sandbox:rdbvu1xb9nn",guildId:"#"},"123")
     feeder()
     interval = setInterval(async () => {
-      if(config.basic.imageMode=='File')await delCache()
-      feeder()
+      // 先清理缓存,再执行 feeder
+      if(config.basic.imageMode=='File') {
+        await delCache()
+      }
+      await feeder()
     }, config.basic.refresh * 1000)
   })
   ctx.on('dispose', async () => {
