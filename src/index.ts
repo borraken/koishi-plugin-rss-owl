@@ -78,7 +78,6 @@ interface MsgConfig {
   keywordBlock?: Array<string>
   blockString?:string
   rssHubUrl?:string
-  readCDATA?:boolean
 }
 
 interface proxyAgent {
@@ -122,7 +121,6 @@ export interface rssArg {
   block?: Array<string>
   // customUrlEnable?: boolean
 
-  readCDATA?:boolean
 
   split?:number
 
@@ -353,56 +351,121 @@ export function apply(ctx: Context, config: Config) {
     )
   }
   const sleep = (delay = 1000) => new Promise(resolve => setTimeout(resolve, delay));
-  let maxRequestLimit = 1
-  let requestRunning = 0
-  const $http = async (url, arg, config = {}) => {
-    while (requestRunning >= maxRequestLimit) {
-      await sleep(1000)
-    }
-    requestRunning++
-    let requestConfig = { timeout: (arg.timeout||0) * 1000 }
-    let proxy = {}
-    if (arg?.proxyAgent?.enabled) {
-      proxy['proxy'] = {
-        "protocol": arg.proxyAgent.protocol,
-        "host": arg.proxyAgent.host,
-        "port": arg.proxyAgent.port
-      }
-      if (arg?.proxyAgent?.auth?.enabled) {
-        proxy['proxy']["auth"] = {
-          username: arg.proxyAgent.auth.username,
-          password: arg.proxyAgent.auth.password
-        }
-      }
-    }
-    if (arg.userAgent) {
-      requestConfig['header'] = { 'User-Agent': arg.userAgent }
-    }
-    debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`,'request info','details')
-    let res
-    let retries = 3
-    while (retries > 0 && !res) {
-      try {
-        if (retries%2) {
-          res = await axios.get(url, { ...requestConfig, ...config, ...proxy })
-        } else {
-          res = await axios.get(url, { ...requestConfig, ...config })
-        }
-      } catch (error) {
-        retries--
-        if (retries <= 0) {
-          requestRunning--
-          debug({url, arg, config},'error request info','error')
-          debug(error,'','error');
 
-          throw error
-        }
-        await sleep(1000)
+  // 添加请求队列管理器
+  class RequestManager {
+    private queue: Array<() => Promise<any>> = []
+    private running = 0
+    private maxConcurrent: number
+    private tokenBucket: number
+    private lastRefill: number
+    private refillRate: number // 令牌产生速率(个/秒)
+    private bucketSize: number
+
+    constructor(maxConcurrent = 3, refillRate = 2, bucketSize = 10) {
+      this.maxConcurrent = maxConcurrent
+      this.tokenBucket = bucketSize
+      this.bucketSize = bucketSize
+      this.refillRate = refillRate
+      this.lastRefill = Date.now()
+    }
+
+    private refillTokens() {
+      const now = Date.now()
+      const timePassed = now - this.lastRefill
+      const newTokens = Math.floor((timePassed / 1000) * this.refillRate)
+      this.tokenBucket = Math.min(this.bucketSize, this.tokenBucket + newTokens)
+      this.lastRefill = now
+    }
+
+    private async processQueue() {
+      if (this.running >= this.maxConcurrent || this.queue.length === 0) return
+
+      this.refillTokens()
+      if (this.tokenBucket <= 0) {
+        setTimeout(() => this.processQueue(), 1000)
+        return
+      }
+
+      const task = this.queue.shift()
+      if (!task) return
+
+      this.running++
+      this.tokenBucket--
+
+      try {
+        await task()
+      } catch (error) {
+        debug(error, 'Request failed', 'error')
+      } finally {
+        this.running--
+        this.processQueue()
       }
     }
-    requestRunning--
-    return res
+
+    async enqueue<T>(task: () => Promise<T>): Promise<T> {
+      return new Promise((resolve, reject) => {
+        this.queue.push(async () => {
+          try {
+            const result = await task()
+            resolve(result)
+          } catch (error) {
+            reject(error)
+          }
+        })
+        this.processQueue()
+      })
+    }
   }
+
+  const requestManager = new RequestManager(3, 2, 10) // 最大并发3，每秒2个令牌，桶容量10
+
+  // 修改 $http 函数
+  const $http = async (url, arg, config = {}) => {
+    const makeRequest = async () => {
+      let requestConfig = { timeout: (arg.timeout || 0) * 1000 }
+      let proxy = {}
+      if (arg?.proxyAgent?.enabled) {
+        proxy['proxy'] = {
+          "protocol": arg.proxyAgent.protocol,
+          "host": arg.proxyAgent.host,
+          "port": arg.proxyAgent.port
+        }
+        if (arg?.proxyAgent?.auth?.enabled) {
+          proxy['proxy']["auth"] = {
+            username: arg.proxyAgent.auth.username,
+            password: arg.proxyAgent.auth.password
+          }
+        }
+      }
+      if (arg.userAgent) {
+        requestConfig['header'] = { 'User-Agent': arg.userAgent }
+      }
+      
+      debug(`${url} : ${JSON.stringify({ ...requestConfig, ...config, ...proxy })}`, 'request info', 'details')
+      
+      let retries = 3
+      while (retries > 0) {
+        try {
+          return await axios.get(url, {
+            ...requestConfig,
+            ...config,
+            ...(retries % 2 ? proxy : {})
+          })
+        } catch (error) {
+          retries--
+          if (retries <= 0) {
+            throw error
+          }
+          await sleep(1000)
+        }
+      }
+      throw new Error('Max retries reached')
+    }
+
+    return requestManager.enqueue(makeRequest)
+  }
+
   const renderHtml2Image = async (htmlContent:string)=>{
     let page = await ctx.puppeteer.page()
     try {
@@ -455,74 +518,75 @@ export function apply(ctx: Context, config: Config) {
       await page.close() // 确保页面被关闭
     }
   }
-  const getRssData = async (url, config:rssArg) => {
-    // let rssXML = await fetch(url)
-    // let rssText = await rssXML.text()
-    // let rssJson = x2js.xml2js(rssText)
-    // console.log(rssXML);
-    let res = (await $http(url, config)).data
-    if(config.readCDATA){
-      res = res.replace(/<!\[CDATA\[(.+?)\]\]>/g,i=>i.match(/^<!\[CDATA\[(.*)\]\]>$/)[1])
-    }
-    let rssJson = x2js.xml2js(res)
-    debug(rssJson,'rssJson','details');
-    let parseContent = (content,attr=undefined)=>{
-      debug(content,'parseContent')
-      if(!content)return undefined
-      if(typeof content =='string')return content
-      if(attr&&content?.[attr])return parseContent(content?.[attr])
-      if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
-      if(content['__text'])return content['__text']?.join?.("")||content['__text']
-      // debug(content,'未知ATOM订阅的content格式，请联系插件作者更新','info')
-      if(Object.prototype.toString.call(content)==='[object Array]'){
-        return parseContent(content[0],attr)
-      }else if(Object.prototype.toString.call(content)==='[object Object]'){
-        return Object.values(content).reduce((t:string,v:any)=>{
-          if(v&&(typeof v =='string'||v?.join)){
-            let text:string = v?.join("")||v
-            return text.length > t.length ? text : t
-          }else{return t}
-        },'')
+
+  // 修改 getRssData 函数的并发处理
+  const getRssData = async (url, config: rssArg) => {
+    try {
+      const res = await $http(url, config)
+      let rssData = res.data
+      const rssJson = x2js.xml2js(rssData)
+      // ... 保持原有的解析逻辑 ...
+      let parseContent = (content,attr=undefined)=>{
+        debug(content,'parseContent')
+        if(!content)return undefined
+        if(typeof content =='string')return content
+        if(attr&&content?.[attr])return parseContent(content?.[attr])
+        if(content['__cdata'])return content['__cdata']?.join?.("")||content['__cdata']
+        if(content['__text'])return content['__text']?.join?.("")||content['__text']
+        // debug(content,'未知ATOM订阅的content格式，请联系插件作者更新','info')
+        if(Object.prototype.toString.call(content)==='[object Array]'){
+          return parseContent(content[0],attr)
+        }else if(Object.prototype.toString.call(content)==='[object Object]'){
+          return Object.values(content).reduce((t:string,v:any)=>{
+            if(v&&(typeof v =='string'||v?.join)){
+              let text:string = v?.join("")||v
+              return text.length > t.length ? text : t
+            }else{return t}
+          },'')
+        }else{
+          return content
+        }
+      }
+      if(rssJson.rss){
+        //rss
+        rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
+        const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i,guid:parseContent(i?.guid), rss: rssJson.rss }))
+        return rssItemList
+      }else if(rssJson.feed){
+        //atom
+        let rss = {channel:{}}
+        let item = rssJson.feed.entry.map(i=>({
+          ...i,
+          title:parseContent(i.title),
+          description:parseContent(i.content),
+          link:parseContent(i.link,'_href'),
+          guid:parseContent(i.id),
+          pubDate:parseContent(i.updated),
+          author:parseContent(i.author,'name'),
+          // category:i,
+          // comments:i,
+          // enclosure:i,
+          // source:i,
+        }))
+        rss.channel = {
+          title:rssJson.feed.title,
+          link:rssJson.feed.link?.[0]?.href||rssJson.feed.link?.href,
+          description:rssJson.feed.summary,
+          generator:rssJson.feed.generator,
+          // webMaster:undefined,
+          language:rssJson.feed['@xml:lang'],
+          item
+        }
+        item = item.map(i=>({rss,...i}))
+        debug(item,'atom item','details')
+        debug(item[0],'atom item2','details')
+        return item
       }else{
-        return content
+        debug(rssJson,'未知rss格式，请提交issue','error')
       }
-    }
-    if(rssJson.rss){
-      //rss
-      rssJson.rss.channel.item = [rssJson.rss.channel.item].flat(Infinity)
-      const rssItemList = rssJson.rss.channel.item.map(i => ({ ...i,guid:parseContent(i?.guid), rss: rssJson.rss }))
-      return rssItemList
-    }else if(rssJson.feed){
-      //atom
-      let rss = {channel:{}}
-      let item = rssJson.feed.entry.map(i=>({
-        ...i,
-        title:parseContent(i.title),
-        description:parseContent(i.content),
-        link:parseContent(i.link,'_href'),
-        guid:parseContent(i.id),
-        pubDate:parseContent(i.updated),
-        author:parseContent(i.author,'name'),
-        // category:i,
-        // comments:i,
-        // enclosure:i,
-        // source:i,
-      }))
-      rss.channel = {
-        title:rssJson.feed.title,
-        link:rssJson.feed.link?.[0]?.href||rssJson.feed.link?.href,
-        description:rssJson.feed.summary,
-        generator:rssJson.feed.generator,
-        // webMaster:undefined,
-        language:rssJson.feed['@xml:lang'],
-        item
-      }
-      item = item.map(i=>({rss,...i}))
-      debug(item,'atom item','details')
-      debug(item[0],'atom item2','details')
-      return item
-    }else{
-      debug(rssJson,'未知rss格式，请提交issue','error')
+    } catch (error) {
+      debug(`Failed to fetch RSS from ${url}`, '', 'error')
+      throw error
     }
   }
   const parseRssItem = async (item: any, arg: rssArg, authorId: string | number) => {
@@ -853,7 +917,6 @@ export function apply(ctx: Context, config: Config) {
     ...arg,
     filter:[...config.msg.keywordFilter,...(arg?.filter||[])],
     block:[...config.msg.keywordBlock,...(arg?.block||[])],
-    // readCDATA: arg.CDATA??config.msg.readCDATA,
     template: arg.template ?? config.basic.defaultTemplate,
     proxyAgent: arg?.proxyAgent ? (arg.proxyAgent?.enabled ? (arg.proxyAgent?.host?arg.proxyAgent:{ ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} }) : { enabled: false }) : config.net.proxyAgent.enabled ? { ...config.net.proxyAgent, auth: config.net.proxyAgent.auth.enabled ? config.net.proxyAgent.auth : {} } : {}
   })
